@@ -9,34 +9,74 @@ Alpha. The public API may change.
 
 ## What it provides
 
-- `nixosModules.frigate` — service module for Frigate. Typed options, no opinions about its dependencies.
-- `nixosModules.hetzner-bare-metal` — bootloader and `network-online` workarounds for Hetzner bare metal.
-- `packages.<system>.frigate` — the Frigate package (Linux and macOS).
+- `nixosModules.default` — the "just works" entry point. Bundles
+  [nix-bitcoin](https://github.com/fort-nix/nix-bitcoin), configures
+  bitcoind and electrs, runs Frigate, and terminates Electrum-over-TLS
+  in nginx. The consumer enables it and sets a hostname.
+- `nixosModules.public-frigate` — the same preset, loose-coupled. Use
+  this when you operate bitcoind and electrs out of band; the preset
+  asserts on their preconditions and configures everything else.
+- `nixosModules.frigate` — the bare service module. Typed options, no
+  opinions about its dependencies.
+- `nixosModules.hetzner-bare-metal` — bootloader and `network-online`
+  workarounds for Hetzner bare metal.
+- `packages.<system>.frigate` — the Frigate package.
 - `overlays.default` — exposes `pkgs.frigate`.
-- `lib.mkRegtestE2E` — VM-based regtest end-to-end test, parameterizable for downstream consumers.
+- `lib.mkRegtestE2E` — VM-based regtest end-to-end test against the
+  bare module, parameterizable for downstream consumers.
+- `lib.mkRegtestPresetE2E` — the same end-to-end test against
+  `nixosModules.default`.
 - `templates.default` — a starting point for a deployment.
 
 ## Quick start
 
-Add `roost` and `nix-bitcoin` to your flake inputs:
+Add `roost` to your flake inputs:
 
 ```nix
 inputs = {
-  nixpkgs.url      = "github:NixOS/nixpkgs/nixos-unstable";
-  nix-bitcoin.url  = "github:fort-nix/nix-bitcoin/release";
-  nix-bitcoin.inputs.nixpkgs.follows = "nixpkgs";
-  roost.url        = "github:josibake/roost";
+  nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+  roost.url   = "github:2140-dev/roost";
   roost.inputs.nixpkgs.follows = "nixpkgs";
 };
 ```
 
-In a NixOS configuration:
+Import `nixosModules.default` and configure:
+
+```nix
+{
+  imports = [ roost.nixosModules.default ];
+
+  services.public-frigate = {
+    enable = true;
+    host   = "frigate.example.com";
+    tls.acmeEmail = "ops@example.com";
+  };
+}
+```
+
+That is the whole deployment. nix-bitcoin's bitcoind and electrs are
+pulled in automatically, configured for a public Frigate node, and
+ACME issues a Let's Encrypt cert for the configured host.
+
+A working scaffold with FIXME markers is available via:
+
+```
+nix flake init -t github:2140-dev/roost
+```
+
+## Bring your own bitcoind
+
+If you operate bitcoind and electrs separately (for example, you
+already have a hardened nix-bitcoin host and want to add Frigate to
+it), use `nixosModules.public-frigate` instead. The preset asserts
+that bitcoind is enabled with `txindex` and that electrs is enabled,
+but otherwise leaves them alone.
 
 ```nix
 {
   imports = [
     nix-bitcoin.nixosModules.default
-    roost.nixosModules.frigate
+    roost.nixosModules.public-frigate
   ];
 
   services.bitcoind = {
@@ -44,23 +84,28 @@ In a NixOS configuration:
     txindex = true;
     dataDirReadableByGroup = true;
   };
-
   services.electrs.enable = true;
 
-  services.frigate = {
-    enable           = true;
-    host             = "frigate.example.com";
-    bitcoind.cookieDir = "/var/lib/bitcoind";
+  services.public-frigate = {
+    enable = true;
+    host   = "frigate.example.com";
+    tls.acmeEmail = "ops@example.com";
   };
-
-  users.users.frigate.extraGroups = [ "bitcoin" ];
 }
 ```
 
-A working scaffold with FIXME markers is available via:
+## Bring your own TLS
 
-```
-nix flake init -t github:josibake/roost
+Set `tls.certificateFile` and `tls.keyFile` instead of `tls.acmeEmail`
+to use a certificate you manage out of band:
+
+```nix
+services.public-frigate = {
+  enable = true;
+  host   = "frigate.example.com";
+  tls.certificateFile = "/var/lib/frigate-tls/fullchain.pem";
+  tls.keyFile         = "/var/lib/frigate-tls/privkey.pem";
+};
 ```
 
 ## Tests
@@ -69,14 +114,21 @@ nix flake init -t github:josibake/roost
 nix flake check
 ```
 
-runs `regtest-e2e`, a VM that brings up bitcoind, electrs, and frigate on regtest, mines 101 blocks, and verifies frigate answers an Electrum-protocol query.
+runs two VM tests:
 
-Downstream consumers can run the same test against their own configuration:
+- `regtest-e2e` — the bare frigate module against nix-bitcoin's
+  bitcoind and electrs. Mines 101 regtest blocks and verifies Frigate
+  answers an Electrum-protocol query on its internal port.
+- `regtest-preset` — `nixosModules.default` end-to-end. Same regtest
+  scenario plus an Electrum-over-TLS probe through the preset's nginx
+  termination using a self-signed certificate.
+
+Downstream consumers can run either test against their own
+configuration:
 
 ```nix
-checks.x86_64-linux.frigate = roost.lib.mkRegtestE2E {
-  pkgs        = nixpkgs.legacyPackages.x86_64-linux;
-  nix-bitcoin = nix-bitcoin;
+checks.x86_64-linux.frigate = roost.lib.mkRegtestPresetE2E {
+  pkgs         = nixpkgs.legacyPackages.x86_64-linux;
   extraModules = [ ./my-host.nix ];
 };
 ```

@@ -4,10 +4,7 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
-    nix-bitcoin.url = "github:fort-nix/nix-bitcoin/release";
-    nix-bitcoin.inputs.nixpkgs.follows = "nixpkgs";
-
-    roost.url = "github:josibake/roost";
+    roost.url = "github:2140-dev/roost";
     roost.inputs.nixpkgs.follows = "nixpkgs";
   };
 
@@ -15,7 +12,6 @@
     {
       self,
       nixpkgs,
-      nix-bitcoin,
       roost,
     }:
     {
@@ -23,8 +19,7 @@
         # FIXME: set to match your target hardware.
         system = "x86_64-linux";
         modules = [
-          nix-bitcoin.nixosModules.default
-          roost.nixosModules.frigate
+          roost.nixosModules.default
           ./configuration.nix
         ];
       };

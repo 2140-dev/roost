@@ -78,8 +78,9 @@
       formatter = forAllSystems (system: (pkgsFor system).nixfmt-tree);
 
       lib = {
-        # VM-based end-to-end regtest. Parameterized so downstream consumers
-        # can run the same scenario with their own modules layered on top.
+        # VM-based end-to-end regtest against the bare frigate module.
+        # Parameterized so downstream consumers can run the same scenario
+        # with their own modules layered on top.
         mkRegtestE2E =
           {
             pkgs,
@@ -87,12 +88,29 @@
             extraModules ? [ ],
           }:
           import ./test/regtest-e2e.nix { inherit pkgs nix-bitcoin extraModules; };
+
+        # End-to-end test against `nixosModules.default` (the preset path
+        # with bitcoind/electrs/nginx-TLS managed automatically). The roost
+        # flake is captured here from the surrounding closure so consumers
+        # do not have to thread it through themselves.
+        mkRegtestPresetE2E =
+          {
+            pkgs,
+            extraModules ? [ ],
+          }:
+          import ./test/regtest-preset.nix {
+            inherit pkgs extraModules;
+            roost = self;
+          };
       };
 
       checks = forAllLinux (system: {
         regtest-e2e = self.lib.mkRegtestE2E {
           pkgs = pkgsFor system;
           inherit nix-bitcoin;
+        };
+        regtest-preset = self.lib.mkRegtestPresetE2E {
+          pkgs = pkgsFor system;
         };
       });
 

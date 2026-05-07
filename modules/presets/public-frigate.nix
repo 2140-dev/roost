@@ -30,6 +30,7 @@ in
         "testnet"
         "testnet4"
         "signet"
+        "regtest"
       ];
       default = "mainnet";
     };
@@ -147,6 +148,12 @@ in
       }
 
       (lib.mkIf cfg.bitcoind.manage {
+        # nix-bitcoin requires a secrets policy whenever bitcoind is enabled
+        # through it. Default to its built-in generator, which writes RPC
+        # credentials to /etc/nix-bitcoin-secrets (mode 0400) on activation.
+        # Override to "manual" if you manage secrets out of band (agenix etc.).
+        nix-bitcoin.generateSecrets = lib.mkDefault true;
+
         services.bitcoind = {
           enable = true;
           txindex = true;

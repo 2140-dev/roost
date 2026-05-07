@@ -31,41 +31,15 @@
     allowedTCPPorts = [ 22 ];
   };
 
-  services.bitcoind = {
-    enable = true;
-    txindex = true;
-    listen = true;
-    address = "0.0.0.0";
-    dataDirReadableByGroup = true;
-  };
-
-  services.electrs.enable = true;
-
-  services.frigate = {
+  services.public-frigate = {
     enable = true;
 
-    # FIXME: public DNS name for this server. Advertised in the Electrum
-    # `server.features` response so wallets can verify the endpoint.
+    # FIXME: public DNS name for this server. The DNS record must point at
+    # this host before deploy, since ACME will request a certificate for it.
     host = "frigate.example.com";
 
-    bitcoind = {
-      authType = "COOKIE";
-      cookieDir = "/var/lib/bitcoind";
-    };
+    # FIXME: email for Let's Encrypt registration. Replace with manual
+    # tls.certificateFile / tls.keyFile if you manage TLS out of band.
+    tls.acmeEmail = "ops@example.com";
   };
-
-  # frigate reads bitcoind's cookie via group access.
-  users.users.frigate.extraGroups = [ "bitcoin" ];
-
-  systemd.services.frigate.after = [
-    "bitcoind.service"
-    "electrs.service"
-  ];
-  systemd.services.frigate.wants = [
-    "bitcoind.service"
-    "electrs.service"
-  ];
-
-  # P2P inbound. RPC stays local-only.
-  networking.firewall.allowedTCPPorts = [ 8333 ];
 }

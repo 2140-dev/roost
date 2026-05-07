@@ -26,6 +26,10 @@ pkgs.testers.runNixOSTest {
       ]
       ++ extraModules;
 
+      # nix-bitcoin requires an explicit secrets policy whenever bitcoind
+      # is enabled through it. The built-in generator is fine for tests.
+      nix-bitcoin.generateSecrets = true;
+
       services.bitcoind = {
         enable = true;
         regtest = true;
