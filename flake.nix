@@ -55,6 +55,24 @@
       nixosModules = {
         frigate = ./modules/frigate.nix;
         hetzner-bare-metal = ./modules/presets/hetzner-bare-metal.nix;
+        public-frigate = ./modules/presets/public-frigate.nix;
+
+        # Batteries-included entry point. Bundles nix-bitcoin so the
+        # consumer needs only `roost` in their flake inputs to deploy a
+        # complete public Frigate node, and turns on the preset's manage
+        # flags so bitcoind and electrs are configured automatically.
+        # Use `nixosModules.public-frigate` directly if you operate
+        # bitcoind/electrs out of band.
+        default = {
+          imports = [
+            nix-bitcoin.nixosModules.default
+            ./modules/presets/public-frigate.nix
+          ];
+          services.public-frigate = {
+            bitcoind.manage = nixpkgs.lib.mkDefault true;
+            electrs.manage = nixpkgs.lib.mkDefault true;
+          };
+        };
       };
 
       formatter = forAllSystems (system: (pkgsFor system).nixfmt-tree);
