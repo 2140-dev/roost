@@ -1,34 +1,39 @@
-{ config, lib, pkgs, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
 
 let
   cfg = config.services.frigate;
   tomlFormat = pkgs.formats.toml { };
 
-  networkSubdir = {
-    mainnet = "";
-    testnet = "testnet";
-    testnet4 = "testnet4";
-    signet = "signet";
-    regtest = "regtest";
-  }.${cfg.network};
-
-  configDir =
-    if networkSubdir == ""
-    then cfg.dataDir
-    else "${cfg.dataDir}/${networkSubdir}";
-
-  coreSettings =
-    { connect = cfg.bitcoind.enable; }
-    // lib.optionalAttrs cfg.bitcoind.enable {
-      server = cfg.bitcoind.server;
-      authType = cfg.bitcoind.authType;
+  networkSubdir =
+    {
+      mainnet = "";
+      testnet = "testnet";
+      testnet4 = "testnet4";
+      signet = "signet";
+      regtest = "regtest";
     }
-    // lib.optionalAttrs (cfg.bitcoind.authType == "COOKIE" && cfg.bitcoind.cookieDir != null) {
-      dataDir = cfg.bitcoind.cookieDir;
-    }
-    // lib.optionalAttrs (cfg.bitcoind.authType == "USERPASS") {
-      auth = "@FRIGATE_BITCOIND_AUTH@";
-    };
+    .${cfg.network};
+
+  configDir = if networkSubdir == "" then cfg.dataDir else "${cfg.dataDir}/${networkSubdir}";
+
+  coreSettings = {
+    connect = cfg.bitcoind.enable;
+  }
+  // lib.optionalAttrs cfg.bitcoind.enable {
+    server = cfg.bitcoind.server;
+    authType = cfg.bitcoind.authType;
+  }
+  // lib.optionalAttrs (cfg.bitcoind.authType == "COOKIE" && cfg.bitcoind.cookieDir != null) {
+    dataDir = cfg.bitcoind.cookieDir;
+  }
+  // lib.optionalAttrs (cfg.bitcoind.authType == "USERPASS") {
+    auth = "@FRIGATE_BITCOIND_AUTH@";
+  };
 
   baseSettings = lib.recursiveUpdate {
     core = coreSettings;
@@ -80,7 +85,13 @@ in
     };
 
     network = mkOption {
-      type = types.enum [ "mainnet" "testnet" "testnet4" "signet" "regtest" ];
+      type = types.enum [
+        "mainnet"
+        "testnet"
+        "testnet4"
+        "signet"
+        "regtest"
+      ];
       default = "mainnet";
     };
 
@@ -110,12 +121,22 @@ in
     };
 
     computeBackend = mkOption {
-      type = types.enum [ "AUTO" "GPU" "CPU" ];
+      type = types.enum [
+        "AUTO"
+        "GPU"
+        "CPU"
+      ];
       default = "AUTO";
     };
 
     logLevel = mkOption {
-      type = types.enum [ "ERROR" "WARN" "INFO" "DEBUG" "TRACE" ];
+      type = types.enum [
+        "ERROR"
+        "WARN"
+        "INFO"
+        "DEBUG"
+        "TRACE"
+      ];
       default = "INFO";
       description = ''
         Frigate log level. Passed to frigate via `--level`. DEBUG/TRACE are
@@ -137,7 +158,10 @@ in
       };
 
       authType = mkOption {
-        type = types.enum [ "COOKIE" "USERPASS" ];
+        type = types.enum [
+          "COOKIE"
+          "USERPASS"
+        ];
         default = "COOKIE";
       };
 
@@ -206,7 +230,8 @@ in
         message = "services.frigate.bitcoind.authCredentialFile must be set when authType = \"USERPASS\".";
       }
       {
-        assertion = cfg.bitcoind.authType != "COOKIE" || !cfg.bitcoind.enable || cfg.bitcoind.cookieDir != null;
+        assertion =
+          cfg.bitcoind.authType != "COOKIE" || !cfg.bitcoind.enable || cfg.bitcoind.cookieDir != null;
         message = "services.frigate.bitcoind.cookieDir must be set when authType = \"COOKIE\".";
       }
     ];
@@ -234,7 +259,8 @@ in
 
     systemd.tmpfiles.rules = [
       "d ${cfg.dataDir} 0750 ${cfg.user} ${cfg.group} - -"
-    ] ++ lib.optional (configDir != cfg.dataDir) "d ${configDir} 0750 ${cfg.user} ${cfg.group} - -";
+    ]
+    ++ lib.optional (configDir != cfg.dataDir) "d ${configDir} 0750 ${cfg.user} ${cfg.group} - -";
 
     systemd.services.frigate = {
       description = "Frigate silent payments scanning server";
@@ -244,7 +270,8 @@ in
 
       preStart = ''
         install -m 0600 ${configTemplate} ${configDir}/config.toml
-      '' + lib.optionalString (cfg.bitcoind.authType == "USERPASS") ''
+      ''
+      + lib.optionalString (cfg.bitcoind.authType == "USERPASS") ''
         ${pkgs.replace-secret}/bin/replace-secret \
           '@FRIGATE_BITCOIND_AUTH@' \
           "$CREDENTIALS_DIRECTORY/bitcoind-auth" \
@@ -260,17 +287,20 @@ in
         Restart = "on-failure";
         RestartSec = 10;
 
-        LoadCredential = lib.optional
-          (cfg.bitcoind.authType == "USERPASS" && cfg.bitcoind.authCredentialFile != null)
-          "bitcoind-auth:${cfg.bitcoind.authCredentialFile}";
+        LoadCredential = lib.optional (
+          cfg.bitcoind.authType == "USERPASS" && cfg.bitcoind.authCredentialFile != null
+        ) "bitcoind-auth:${cfg.bitcoind.authCredentialFile}";
 
-        BindReadOnlyPaths = lib.optional
-          (cfg.bitcoind.authType == "COOKIE" && cfg.bitcoind.cookieDir != null)
-          cfg.bitcoind.cookieDir;
+        BindReadOnlyPaths = lib.optional (
+          cfg.bitcoind.authType == "COOKIE" && cfg.bitcoind.cookieDir != null
+        ) cfg.bitcoind.cookieDir;
 
         ReadWritePaths = [ cfg.dataDir ];
 
-        SupplementaryGroups = [ "video" "render" ];
+        SupplementaryGroups = [
+          "video"
+          "render"
+        ];
         DevicePolicy = "closed";
         DeviceAllow = cfg.gpuDevices;
         PrivateDevices = false;
@@ -282,11 +312,18 @@ in
         ProtectKernelTunables = true;
         ProtectKernelModules = true;
         ProtectControlGroups = true;
-        RestrictAddressFamilies = [ "AF_UNIX" "AF_INET" "AF_INET6" ];
+        RestrictAddressFamilies = [
+          "AF_UNIX"
+          "AF_INET"
+          "AF_INET6"
+        ];
         RestrictNamespaces = true;
         RestrictRealtime = true;
         LockPersonality = true;
-        SystemCallFilter = [ "@system-service" "~@privileged" ];
+        SystemCallFilter = [
+          "@system-service"
+          "~@privileged"
+        ];
         SystemCallArchitectures = "native";
       };
     };

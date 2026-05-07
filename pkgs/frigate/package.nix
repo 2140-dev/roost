@@ -1,9 +1,10 @@
-{ lib
-, stdenv
-, fetchFromGitHub
-, gradle_9
-, jdk25
-, makeBinaryWrapper
+{
+  lib,
+  stdenv,
+  fetchFromGitHub,
+  gradle_9,
+  jdk25,
+  makeBinaryWrapper,
 }:
 
 let
@@ -53,7 +54,11 @@ stdenv.mkDerivation (finalAttrs: {
       --replace-fail "tasks.jlink.finalizedBy('addUserWritePermission')" ""
   '';
 
-  nativeBuildInputs = [ frigateGradle jdk25 makeBinaryWrapper ];
+  nativeBuildInputs = [
+    frigateGradle
+    jdk25
+    makeBinaryWrapper
+  ];
 
   mitmCache = frigateGradle.fetchDeps {
     pkg = finalAttrs.finalPackage;
@@ -87,7 +92,12 @@ stdenv.mkDerivation (finalAttrs: {
     description = "Silent payments scanning server for Bitcoin, by Sparrow Wallet";
     homepage = "https://github.com/sparrowwallet/frigate";
     license = lib.licenses.asl20;
-    platforms = [ "x86_64-linux" "aarch64-linux" "aarch64-darwin" "x86_64-darwin" ];
+    platforms = [
+      "x86_64-linux"
+      "aarch64-linux"
+      "aarch64-darwin"
+      "x86_64-darwin"
+    ];
     mainProgram = "frigate";
   };
 })

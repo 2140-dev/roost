@@ -1,4 +1,9 @@
-{ config, lib, pkgs, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
 
 {
   # GRUB with efiInstallAsRemovable + an EF02 BIOS boot partition is the

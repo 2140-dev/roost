@@ -1,4 +1,9 @@
-{ config, lib, pkgs, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
 
 {
   # FIXME: hostname for this machine.
@@ -44,7 +49,7 @@
     host = "frigate.example.com";
 
     bitcoind = {
-      authType  = "COOKIE";
+      authType = "COOKIE";
       cookieDir = "/var/lib/bitcoind";
     };
   };
@@ -52,8 +57,14 @@
   # frigate reads bitcoind's cookie via group access.
   users.users.frigate.extraGroups = [ "bitcoin" ];
 
-  systemd.services.frigate.after = [ "bitcoind.service" "electrs.service" ];
-  systemd.services.frigate.wants = [ "bitcoind.service" "electrs.service" ];
+  systemd.services.frigate.after = [
+    "bitcoind.service"
+    "electrs.service"
+  ];
+  systemd.services.frigate.wants = [
+    "bitcoind.service"
+    "electrs.service"
+  ];
 
   # P2P inbound. RPC stays local-only.
   networking.firewall.allowedTCPPorts = [ 8333 ];
