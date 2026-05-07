@@ -58,6 +58,11 @@ pkgs.testers.runNixOSTest {
       services.bitcoind = {
         regtest = true;
         dbCache = lib.mkForce 100;
+        # nix-bitcoin pins the wallet off (production-correct: a public
+        # frigate node never needs it). The mining flow below is wallet-
+        # driven, so flip it on for the test only. `mkForce` is required
+        # because their default isn't `mkDefault`.
+        disablewallet = lib.mkForce false;
         # Disable the "is the tip recent?" check that gates IBD exit. In a
         # test VM the clock can drift between boot and mining, leaving the
         # IBD flag stuck at `true` even with 101 freshly-mined blocks. Same

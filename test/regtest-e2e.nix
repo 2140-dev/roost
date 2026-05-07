@@ -36,6 +36,11 @@ pkgs.testers.runNixOSTest {
         txindex = true;
         dataDirReadableByGroup = true;
         dbCache = 100;
+        # nix-bitcoin pins the wallet off (production-correct: frigate
+        # never needs it). The mining flow below is wallet-driven, so flip
+        # it on for the test only. `mkForce` is required because their
+        # default isn't `mkDefault`.
+        disablewallet = lib.mkForce false;
         # Disable the "is the tip recent?" check that gates IBD exit. In a
         # test VM the clock can drift between boot and mining, leaving the
         # IBD flag stuck at `true` even with 101 freshly-mined blocks. That
@@ -74,6 +79,21 @@ pkgs.testers.runNixOSTest {
 
       # frigate reads bitcoind's cookie via group access.
       users.users.frigate.extraGroups = [ "bitcoin" ];
+
+      # The bare frigate module deliberately does not name bitcoind/electrs
+      # (loose coupling). Without explicit ordering, systemd starts frigate
+      # in parallel with bitcoind and the BindReadOnlyPaths to the regtest
+      # cookie directory fails because the path does not exist yet. This
+      # ordering is what `nixosModules.public-frigate` provides for
+      # production hosts; the bare-module test must set it itself.
+      systemd.services.frigate.after = [
+        "bitcoind.service"
+        "electrs.service"
+      ];
+      systemd.services.frigate.wants = [
+        "bitcoind.service"
+        "electrs.service"
+      ];
 
       # nc for testScript probes against electrs/frigate.
       environment.systemPackages = [ pkgs.netcat-openbsd ];
