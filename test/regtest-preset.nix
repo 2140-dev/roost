@@ -90,7 +90,7 @@ pkgs.testers.runNixOSTest {
 
       environment.systemPackages = [
         pkgs.netcat-openbsd
-        pkgs.socat
+        pkgs.openssl
       ];
 
       virtualisation.cores = 4;
@@ -141,14 +141,18 @@ pkgs.testers.runNixOSTest {
       assert "test.local" in internal, f"internal server.features missing configured host: {internal}"
 
       # nginx terminates TLS on the public port and stream-proxies to frigate.
-      # socat with verify=0 matches the test cert chain; production deployments
-      # would use ACME and full verification.
+      # `-ign_eof` keeps s_client reading from the TLS socket after stdin
+      # closes, so we don't race nginx's response against socket teardown.
+      # `-servername` provides an explicit SNI matching the self-signed cert.
+      # `timeout` bounds the wait; production deployments would use ACME and
+      # full chain verification.
       machine.wait_for_unit("nginx.service")
       machine.wait_for_open_port(50002)
       public = machine.succeed(
           "{ echo '{\"jsonrpc\":\"2.0\",\"id\":0,\"method\":\"server.version\",\"params\":[\"test\",\"1.4\"]}'"
           "; echo '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"server.features\",\"params\":[]}'; }"
-          " | socat - OPENSSL:127.0.0.1:50002,verify=0"
+          " | timeout 5 openssl s_client -connect 127.0.0.1:50002 -servername test.local"
+          " -quiet -ign_eof 2>/dev/null || true"
       )
       print("frigate public TLS response:", public)
       assert "test.local" in public, f"public server.features missing configured host: {public}"
