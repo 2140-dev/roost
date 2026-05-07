@@ -64,6 +64,19 @@ A working scaffold with FIXME markers is available via:
 nix flake init -t github:2140-dev/roost
 ```
 
+## Binary cache
+
+Pre-built outputs for `frigate` (and other roost derivations) are
+published to Cachix at `https://2140-dev.cachix.org`. Configure your
+system to use it once:
+
+```
+cachix use 2140-dev
+```
+
+Subsequent `nix build .#frigate` and `nixos-rebuild switch` invocations
+pull the cached package instead of running the Gradle build locally.
+
 ## Bring your own bitcoind
 
 If you operate bitcoind and electrs separately (for example, you

@@ -140,10 +140,15 @@ pkgs.testers.runNixOSTest {
       )
 
       # frigate reaches steady state and answers an Electrum query.
+      # Electrum protocol requires `server.version` as the first message on
+      # any new connection; frigate enforces this and rejects anything else
+      # with VersionNotNegotiatedException. Pipe both requests through one
+      # nc invocation so they share a connection.
       machine.wait_for_unit("frigate.service")
       machine.wait_for_open_port(57001)
       response = machine.succeed(
-          "echo '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"server.features\",\"params\":[]}'"
+          "{ echo '{\"jsonrpc\":\"2.0\",\"id\":0,\"method\":\"server.version\",\"params\":[\"test\",\"1.4\"]}'"
+          "; echo '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"server.features\",\"params\":[]}'; }"
           " | nc -q 1 127.0.0.1 57001"
       )
       print("frigate server.features response:", response)

@@ -83,6 +83,11 @@ pkgs.testers.runNixOSTest {
       services.frigate.bitcoind.cookieDir = lib.mkForce "/var/lib/bitcoind/regtest";
       services.frigate.computeBackend = lib.mkForce "CPU";
 
+      # The preset hardcodes mainnet's RPC port (8332). In regtest, bitcoind
+      # binds the chain-default port (18443). Point frigate at whatever
+      # nix-bitcoin actually configured.
+      services.frigate.bitcoind.server = lib.mkForce "http://127.0.0.1:${toString config.services.bitcoind.rpc.port}";
+
       environment.systemPackages = [
         pkgs.netcat-openbsd
         pkgs.socat
@@ -121,11 +126,15 @@ pkgs.testers.runNixOSTest {
       )
 
       # Frigate answers on its internal port — no TLS, this is what nginx
-      # proxies to.
+      # proxies to. Electrum protocol requires `server.version` as the first
+      # message on any new connection; frigate enforces this and rejects
+      # anything else with VersionNotNegotiatedException. Pipe both requests
+      # through one nc invocation so they share a connection.
       machine.wait_for_unit("frigate.service")
       machine.wait_for_open_port(57001)
       internal = machine.succeed(
-          "echo '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"server.features\",\"params\":[]}'"
+          "{ echo '{\"jsonrpc\":\"2.0\",\"id\":0,\"method\":\"server.version\",\"params\":[\"test\",\"1.4\"]}'"
+          "; echo '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"server.features\",\"params\":[]}'; }"
           " | nc -q 1 127.0.0.1 57001"
       )
       print("frigate internal response:", internal)
@@ -137,7 +146,8 @@ pkgs.testers.runNixOSTest {
       machine.wait_for_unit("nginx.service")
       machine.wait_for_open_port(50002)
       public = machine.succeed(
-          "echo '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"server.features\",\"params\":[]}'"
+          "{ echo '{\"jsonrpc\":\"2.0\",\"id\":0,\"method\":\"server.version\",\"params\":[\"test\",\"1.4\"]}'"
+          "; echo '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"server.features\",\"params\":[]}'; }"
           " | socat - OPENSSL:127.0.0.1:50002,verify=0"
       )
       print("frigate public TLS response:", public)

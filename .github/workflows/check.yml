@@ -27,5 +27,11 @@ jobs:
           extra_nix_config: |
             experimental-features = nix-command flakes
             accept-flake-config = true
+      # Pulls cached frigate + VM-test outputs from prior runs, and pushes
+      # any new outputs back. Skips the Gradle build entirely on cache hits.
+      - uses: cachix/cachix-action@v15
+        with:
+          name: 2140-dev
+          authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
       - name: nix flake check
         run: nix flake check --print-build-logs
