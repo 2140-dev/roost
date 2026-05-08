@@ -212,6 +212,7 @@ in
           streamConfig = ''
             server {
               listen ${toString cfg.publicPort} ssl;
+              listen [::]:${toString cfg.publicPort} ssl;
               ssl_certificate     ${certFile};
               ssl_certificate_key ${keyFile};
               proxy_pass 127.0.0.1:${toString config.services.frigate.tcpPort};
