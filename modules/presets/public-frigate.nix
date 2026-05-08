@@ -224,12 +224,27 @@ in
         networking.firewall.allowedTCPPorts = [ cfg.publicPort ];
       }
 
+      # ACME path: a minimal HTTP vhost on port 80 hosts the HTTP-01
+      # challenge so Let's Encrypt can verify domain ownership. NixOS's
+      # `enableACME` wires `security.acme.certs.<host>` and the challenge
+      # location automatically; the `404` covers anything else hitting
+      # this vhost.
       (lib.mkIf (cfg.tls.acmeEmail != null) {
         security.acme = {
           acceptTerms = true;
           defaults.email = cfg.tls.acmeEmail;
-          certs.${cfg.host} = { };
         };
+
+        services.nginx.virtualHosts.${cfg.host} = {
+          enableACME = true;
+          locations."/".return = "404";
+        };
+
+        networking.firewall.allowedTCPPorts = [ 80 ];
+
+        # nginx reads cert files from /var/lib/acme; the acme group owns
+        # them.
+        users.users.nginx.extraGroups = [ "acme" ];
       })
     ]
   );
