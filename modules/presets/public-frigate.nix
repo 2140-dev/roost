@@ -7,6 +7,15 @@
 
 let
   cfg = config.services.public-frigate;
+
+  # When ACME issues the cert, nginx writes it to `/var/lib/acme/<host>/`.
+  # When the consumer brings their own, we point straight at their files.
+  certFile =
+    if cfg.tls.certificateFile != null then
+      cfg.tls.certificateFile
+    else
+      "/var/lib/acme/${cfg.host}/fullchain.pem";
+  keyFile = if cfg.tls.keyFile != null then cfg.tls.keyFile else "/var/lib/acme/${cfg.host}/key.pem";
 in
 {
   imports = [ ../frigate.nix ];
@@ -195,29 +204,17 @@ in
         ];
       }
 
-      # nginx in stream mode: the Electrum protocol is raw TCP+TLS, not HTTP,
-      # so this lives outside the http context.
+      # nginx terminates TLS and stream-proxies to frigate. Electrum is raw
+      # TCP+TLS, not HTTP, so the listener belongs in the `stream` context.
       {
         services.nginx = {
           enable = true;
-          appendConfig = ''
-            stream {
-              upstream frigate {
-                server 127.0.0.1:${toString config.services.frigate.tcpPort};
-              }
-              server {
-                listen ${toString cfg.publicPort} ssl;
-                ssl_certificate     ${
-                  if cfg.tls.certificateFile != null then
-                    cfg.tls.certificateFile
-                  else
-                    "/var/lib/acme/${cfg.host}/fullchain.pem"
-                };
-                ssl_certificate_key ${
-                  if cfg.tls.keyFile != null then cfg.tls.keyFile else "/var/lib/acme/${cfg.host}/key.pem"
-                };
-                proxy_pass frigate;
-              }
+          streamConfig = ''
+            server {
+              listen ${toString cfg.publicPort} ssl;
+              ssl_certificate     ${certFile};
+              ssl_certificate_key ${keyFile};
+              proxy_pass 127.0.0.1:${toString config.services.frigate.tcpPort};
             }
           '';
         };
