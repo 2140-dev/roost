@@ -215,6 +215,10 @@ in
               ssl_certificate     ${certFile};
               ssl_certificate_key ${keyFile};
               proxy_pass 127.0.0.1:${toString config.services.frigate.tcpPort};
+              # Electrum subscriptions are long-lived; nginx's default 10
+              # minute timeout drops idle Sparrow Wallet connections.
+              proxy_timeout 1h;
+              proxy_connect_timeout 5s;
             }
           '';
         };
