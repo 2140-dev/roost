@@ -90,13 +90,13 @@ in
       '';
     };
 
-    electrs.manage = mkOption {
+    fulcrum.manage = mkOption {
       type = types.bool;
       default = false;
       description = ''
-        When true, the preset enables `services.electrs`. When false
-        (default), the preset asserts electrs is enabled and leaves it
-        alone.
+        When true, the preset enables `services.fulcrum` (nix-bitcoin's
+        module). When false (default), the preset asserts fulcrum is
+        enabled and leaves it alone.
       '';
     };
 
@@ -130,11 +130,11 @@ in
             message = "services.public-frigate requires services.bitcoind.txindex = true.";
           }
           {
-            assertion = cfg.electrs.manage || (config.services ? electrs && config.services.electrs.enable);
+            assertion = cfg.fulcrum.manage || (config.services ? fulcrum && config.services.fulcrum.enable);
             message = ''
-              services.public-frigate requires services.electrs.enable = true.
-              Either import an electrs module and enable it, or set
-              services.public-frigate.electrs.manage = true.
+              services.public-frigate requires services.fulcrum.enable = true.
+              Either import nix-bitcoin (which provides the fulcrum module)
+              and enable it, or set services.public-frigate.fulcrum.manage = true.
             '';
           }
           {
@@ -174,8 +174,8 @@ in
         networking.firewall.allowedTCPPorts = [ 8333 ];
       })
 
-      (lib.mkIf cfg.electrs.manage {
-        services.electrs.enable = true;
+      (lib.mkIf cfg.fulcrum.manage {
+        services.fulcrum.enable = true;
       })
 
       {
@@ -196,11 +196,11 @@ in
 
         systemd.services.frigate.after = [
           "bitcoind.service"
-          "electrs.service"
+          "fulcrum.service"
         ];
         systemd.services.frigate.wants = [
           "bitcoind.service"
-          "electrs.service"
+          "fulcrum.service"
         ];
       }
 

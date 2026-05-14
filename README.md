@@ -11,10 +11,10 @@ Alpha. The public API may change.
 
 - `nixosModules.default` — the "just works" entry point. Bundles
   [nix-bitcoin](https://github.com/fort-nix/nix-bitcoin), configures
-  bitcoind and electrs, runs Frigate, and terminates Electrum-over-TLS
+  bitcoind and fulcrum, runs Frigate, and terminates Electrum-over-TLS
   in nginx. The consumer enables it and sets a hostname.
 - `nixosModules.public-frigate` — the same preset, loose-coupled. Use
-  this when you operate bitcoind and electrs out of band; the preset
+  this when you operate bitcoind and fulcrum out of band; the preset
   asserts on their preconditions and configures everything else.
 - `nixosModules.frigate` — the bare service module. Typed options, no
   opinions about its dependencies.
@@ -54,7 +54,7 @@ Import `nixosModules.default` and configure:
 }
 ```
 
-That is the whole deployment. nix-bitcoin's bitcoind and electrs are
+That is the whole deployment. nix-bitcoin's bitcoind and fulcrum are
 pulled in automatically, configured for a public Frigate node, and
 ACME issues a Let's Encrypt cert for the configured host.
 
@@ -79,10 +79,10 @@ pull the cached package instead of running the Gradle build locally.
 
 ## Bring your own bitcoind
 
-If you operate bitcoind and electrs separately (for example, you
+If you operate bitcoind and fulcrum separately (for example, you
 already have a hardened nix-bitcoin host and want to add Frigate to
 it), use `nixosModules.public-frigate` instead. The preset asserts
-that bitcoind is enabled with `txindex` and that electrs is enabled,
+that bitcoind is enabled with `txindex` and that fulcrum is enabled,
 but otherwise leaves them alone.
 
 ```nix
@@ -97,7 +97,7 @@ but otherwise leaves them alone.
     txindex = true;
     dataDirReadableByGroup = true;
   };
-  services.electrs.enable = true;
+  services.fulcrum.enable = true;
 
   services.public-frigate = {
     enable = true;
@@ -131,10 +131,12 @@ runs two VM tests:
 
 - `regtest-e2e` — the bare frigate module against nix-bitcoin's
   bitcoind and electrs. Mines 101 regtest blocks and verifies Frigate
-  answers an Electrum-protocol query on its internal port.
-- `regtest-preset` — `nixosModules.default` end-to-end. Same regtest
-  scenario plus an Electrum-over-TLS probe through the preset's nginx
-  termination using a self-signed certificate.
+  answers an Electrum-protocol query on its internal port. Kept on
+  electrs to demonstrate the bare module is backend-agnostic.
+- `regtest-preset` — `nixosModules.default` end-to-end with fulcrum
+  as the Electrum backend. Same regtest scenario plus an
+  Electrum-over-TLS probe through the preset's nginx termination
+  using a self-signed certificate.
 
 Downstream consumers can run either test against their own
 configuration:

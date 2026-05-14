@@ -5,7 +5,7 @@
 }:
 
 # End-to-end test for the public-frigate preset, exercised through
-# `nixosModules.default`. Boots the entire stack — bitcoind + electrs +
+# `nixosModules.default`. Boots the entire stack — bitcoind + fulcrum +
 # frigate + nginx-TLS — on regtest, mines 101 blocks, verifies frigate
 # answers Electrum queries both on its internal port and through the
 # preset's TLS termination on the public port.
@@ -72,11 +72,6 @@ pkgs.testers.runNixOSTest {
         '';
       };
 
-      # romanz/electrs takes the network as a CLI flag — nix-bitcoin's module
-      # doesn't surface a typed `network` option. `--daemon-dir` points
-      # electrs at the regtest cookie subdirectory.
-      services.electrs.extraArgs = lib.mkForce "--network regtest --daemon-dir /var/lib/bitcoind/regtest";
-
       # Frigate's cookie path differs in regtest, and there's no GPU in the
       # test VM. ufsecp falls back to CPU regardless, but being explicit
       # avoids a startup probe.
@@ -106,7 +101,7 @@ pkgs.testers.runNixOSTest {
       machine.wait_for_unit("bitcoind.service")
       machine.wait_until_succeeds("${cli} getblockchaininfo", timeout=30)
 
-      # 101 blocks: first coinbase matures, electrs/frigate get a real tip.
+      # 101 blocks: first coinbase matures, fulcrum/frigate get a real tip.
       machine.succeed("${cli} createwallet test")
       addr = machine.succeed("${cli} -rpcwallet=test getnewaddress").strip()
       machine.succeed(f"${cli} generatetoaddress 101 {addr}")
@@ -116,7 +111,7 @@ pkgs.testers.runNixOSTest {
           timeout=30,
       )
 
-      machine.wait_for_unit("electrs.service")
+      machine.wait_for_unit("fulcrum.service")
       machine.wait_for_open_port(50001)
       machine.wait_until_succeeds(
           "echo '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"blockchain.headers.subscribe\",\"params\":[]}'"

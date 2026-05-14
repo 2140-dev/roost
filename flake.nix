@@ -60,9 +60,9 @@
         # Batteries-included entry point. Bundles nix-bitcoin so the
         # consumer needs only `roost` in their flake inputs to deploy a
         # complete public Frigate node, and turns on the preset's manage
-        # flags so bitcoind and electrs are configured automatically.
+        # flags so bitcoind and fulcrum are configured automatically.
         # Use `nixosModules.public-frigate` directly if you operate
-        # bitcoind/electrs out of band.
+        # bitcoind/fulcrum out of band.
         default = {
           imports = [
             nix-bitcoin.nixosModules.default
@@ -70,7 +70,7 @@
           ];
           services.public-frigate = {
             bitcoind.manage = nixpkgs.lib.mkDefault true;
-            electrs.manage = nixpkgs.lib.mkDefault true;
+            fulcrum.manage = nixpkgs.lib.mkDefault true;
           };
         };
       };
