@@ -246,10 +246,24 @@ in
       # themselves, or mkForce
       # `services.frigate.bitcoind.zmqSequenceEndpoint = null` to fall
       # back to polling (and accept the upstream warning).
+      #
+      # nix-bitcoin's bitcoind module loosens RestrictAddressFamilies to
+      # include AF_NETLINK only when its *typed* ZMQ options
+      # (`zmqpubrawblock`, `zmqpubrawtx`) are set — see `zmqServerEnabled`
+      # in modules/bitcoind.nix and `allowNetlink` in pkgs/lib.nix on
+      # the locked release. Going through `extraConfig` bypasses that
+      # gate, so libzmq's `getifaddrs()` call during `zmq_bind` hits
+      # EAFNOSUPPORT and `resolve_nic_name` aborts the daemon. Mirror
+      # `allowNetlink` here: `AF_UNIX AF_INET AF_INET6` is the verbatim
+      # `defaultHardening.RestrictAddressFamilies` value, plus the
+      # `AF_NETLINK` `allowNetlink` would have added. mkForce because
+      # the nix-bitcoin module already assigns the string.
       (lib.mkIf cfg.bitcoind.manage {
         services.bitcoind.extraConfig = ''
           zmqpubsequence=${zmqSequenceEndpoint}
         '';
+        systemd.services.bitcoind.serviceConfig.RestrictAddressFamilies =
+          lib.mkForce "AF_UNIX AF_INET AF_INET6 AF_NETLINK";
       })
 
       # ACME path: a minimal HTTP vhost on port 80 hosts the HTTP-01
