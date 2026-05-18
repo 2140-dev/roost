@@ -118,11 +118,20 @@ pkgs.testers.runNixOSTest {
       # canonical Electrum ports. Verify it's alive on the new backend
       # port and has indexed to the mined tip — frigate proxies all
       # non-silent-payments traffic here.
+      #
+      # Match the frigate probe's shape (server.version handshake first,
+      # then the real query, sharing one connection via the brace group)
+      # so we don't depend on Fulcrum's lenient handshake behavior. -q 3
+      # because frigate continuously dials fulcrum as its backend on the
+      # same loopback, and the response can land outside a 1s post-EOF
+      # window under that load — turning every retry into a silent miss.
       machine.wait_for_unit("fulcrum.service")
       machine.wait_for_open_port(60001)
       machine.wait_until_succeeds(
-          "echo '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"blockchain.headers.subscribe\",\"params\":[]}'"
-          " | nc -q 1 127.0.0.1 60001"
+          "{ echo '{\"jsonrpc\":\"2.0\",\"id\":0,\"method\":\"server.version\",\"params\":[\"test\",\"1.4\"]}'"
+          "; echo '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"blockchain.headers.subscribe\",\"params\":[]}'; }"
+          " | nc -q 3 127.0.0.1 60001"
+          " | tee /dev/stderr"
           " | grep -q '\"height\":101'",
           timeout=120,
       )
