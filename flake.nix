@@ -56,6 +56,7 @@
         frigate = ./modules/frigate.nix;
         hetzner-bare-metal = ./modules/presets/hetzner-bare-metal.nix;
         public-frigate = ./modules/presets/public-frigate.nix;
+        wireguard-mesh = ./modules/wireguard-mesh.nix;
 
         # Batteries-included entry point. Bundles nix-bitcoin so the
         # consumer needs only `roost` in their flake inputs to deploy a
@@ -102,6 +103,20 @@
             inherit pkgs extraModules;
             roost = self;
           };
+
+        # Two-node test of the wireguard-mesh module. Boots two VMs on
+        # the test driver's shared virtual network, brings up the mesh,
+        # and verifies cross-mesh reachability + firewall scoping.
+        mkMeshTest =
+          {
+            pkgs,
+            extraModules ? [ ],
+          }:
+          import ./test/mesh.nix {
+            inherit pkgs extraModules;
+            roost = self;
+          };
+
       };
 
       checks = forAllLinux (system: {
@@ -110,6 +125,9 @@
           inherit nix-bitcoin;
         };
         regtest-preset = self.lib.mkRegtestPresetE2E {
+          pkgs = pkgsFor system;
+        };
+        wireguard-mesh = self.lib.mkMeshTest {
           pkgs = pkgsFor system;
         };
       });
