@@ -114,43 +114,52 @@ pkgs.testers.runNixOSTest {
           timeout=30,
       )
 
-      # Fulcrum has been moved off 50001 so frigate can occupy the
-      # canonical Electrum ports. Verify it's alive on the new backend
-      # port and has indexed to the mined tip — frigate proxies all
-      # non-silent-payments traffic here.
-      #
-      # Match the frigate probe's shape (server.version handshake first,
-      # then the real query, sharing one connection via the brace group)
-      # so we don't depend on Fulcrum's lenient handshake behavior. -q 3
-      # because frigate continuously dials fulcrum as its backend on the
-      # same loopback, and the response can land outside a 1s post-EOF
-      # window under that load — turning every retry into a silent miss.
+      # Fulcrum's backend role is fully exercised by the frigate probe
+      # below — frigate proxies all non-silent-payments traffic to it,
+      # so a `blockchain.headers.subscribe` answered with `height:101`
+      # through frigate covers fulcrum's indexing, frigate's backend
+      # connection, and frigate's proxy. We only check fulcrum's unit
+      # status and listener here.
       machine.wait_for_unit("fulcrum.service")
       machine.wait_for_open_port(60001)
-      machine.wait_until_succeeds(
-          "{ echo '{\"jsonrpc\":\"2.0\",\"id\":0,\"method\":\"server.version\",\"params\":[\"test\",\"1.4\"]}'"
-          "; echo '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"blockchain.headers.subscribe\",\"params\":[]}'; }"
-          " | nc -q 3 127.0.0.1 60001"
-          " | tee /dev/stderr"
-          " | grep -q '\"height\":101'",
-          timeout=120,
-      )
 
       # Frigate's plaintext listener now sits on the canonical Electrum
       # port (50001). Electrum protocol requires `server.version` as the
       # first message on any new connection; frigate enforces this and
-      # rejects anything else with VersionNotNegotiatedException. Pipe
-      # both requests through one nc invocation so they share a
-      # connection.
+      # rejects anything else with VersionNotNegotiatedException. Share
+      # one connection across all three requests via the brace group.
+      #
+      # Polling loop instead of `wait_until_succeeds` so each attempt's
+      # captured response is in the test log — the test driver doesn't
+      # surface stdout/stderr from wait-loop attempts otherwise, which
+      # makes diagnosing real failures (e.g. a partial response, a
+      # different JSON shape, a backend error) effectively impossible.
       machine.wait_for_unit("frigate.service")
       machine.wait_for_open_port(50001)
-      internal = machine.succeed(
+
+      import time
+      deadline = time.time() + 120
+      probe = (
           "{ echo '{\"jsonrpc\":\"2.0\",\"id\":0,\"method\":\"server.version\",\"params\":[\"test\",\"1.4\"]}'"
-          "; echo '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"server.features\",\"params\":[]}'; }"
-          " | nc -q 1 127.0.0.1 50001"
+          "; echo '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"server.features\",\"params\":[]}'"
+          "; echo '{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"blockchain.headers.subscribe\",\"params\":[]}'; }"
+          " | nc -q 3 127.0.0.1 50001"
       )
-      print("frigate plaintext response:", internal)
+      internal = ""
+      while time.time() < deadline:
+          _status, internal = machine.execute(probe)
+          print(f"frigate plaintext probe ({len(internal)}B): {internal!r}")
+          if "test.local" in internal and '"height":101' in internal:
+              break
+          time.sleep(2)
+      else:
+          raise Exception(
+              f"frigate plaintext probe never returned expected content within 120s. "
+              f"Last response: {internal!r}"
+          )
+
       assert "test.local" in internal, f"plaintext server.features missing configured host: {internal}"
+      assert '"height":101' in internal, f"plaintext blockchain.headers.subscribe missing height:101 (frigate→fulcrum proxy): {internal}"
 
       # Frigate terminates TLS itself on the public port (50002) using
       # the self-signed cert wired into the preset above. `-ign_eof`
