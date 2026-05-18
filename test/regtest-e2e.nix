@@ -65,6 +65,13 @@ pkgs.testers.runNixOSTest {
         enable = true;
         network = "regtest";
         host = "test.local";
+        # The bare module's default `tcp` listener targets 50001, which
+        # electrs already occupies in this test. Move frigate to 57001 to
+        # avoid the conflict — this test exercises the loose-coupled bare
+        # module path and demonstrates the override knob; the preset's
+        # production topology puts frigate on 50001 and the backend on
+        # 60001 instead.
+        tcp = "tcp://127.0.0.1:57001";
         # No GPU in the test VM; ufsecp falls back to CPU regardless, but
         # being explicit avoids a startup probe.
         computeBackend = "CPU";

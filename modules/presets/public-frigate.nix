@@ -179,17 +179,32 @@ in
       })
 
       {
+        # Frigate terminates TLS itself on the public port. The plaintext
+        # listener is bound to loopback for local probes/operator use —
+        # all public traffic comes in over `ssl`. The backend Electrum
+        # server (fulcrum/electrs/etc.) listens on a non-conflicting port
+        # so frigate can occupy the canonical Electrum ports.
         services.frigate = {
           enable = true;
           host = cfg.host;
           network = cfg.network;
+          tcp = "tcp://127.0.0.1:50001";
+          ssl = "ssl://0.0.0.0:${toString cfg.publicPort}";
+          sslCert = certFile;
+          sslKey = keyFile;
           bitcoind = {
             enable = true;
             server = "http://127.0.0.1:8332";
             authType = "COOKIE";
             cookieDir = "/var/lib/bitcoind";
+            zmqSequenceEndpoint = "tcp://127.0.0.1:28336";
           };
-          electrumBackend = "tcp://127.0.0.1:50001";
+          electrumBackend = "tcp://127.0.0.1:60001";
+          # ACME-issued certs live in /var/lib/acme/<host>/ owned by the
+          # `acme` group. Frigate reads them at startup, so its service
+          # needs the group. Skipped for manual-cert deployments where
+          # the operator has already arranged read access.
+          extraSupplementaryGroups = lib.optional (cfg.tls.acmeEmail != null) "acme";
         };
 
         users.users.frigate.extraGroups = [ "bitcoin" ];
@@ -202,51 +217,59 @@ in
           "bitcoind.service"
           "fulcrum.service"
         ];
-      }
 
-      # nginx terminates TLS and stream-proxies to frigate. Electrum is raw
-      # TCP+TLS, not HTTP, so the listener belongs in the `stream` context.
-      {
-        services.nginx = {
-          enable = true;
-          streamConfig = ''
-            server {
-              listen ${toString cfg.publicPort} ssl;
-              listen [::]:${toString cfg.publicPort} ssl;
-              ssl_certificate     ${certFile};
-              ssl_certificate_key ${keyFile};
-              proxy_pass 127.0.0.1:${toString config.services.frigate.tcpPort};
-              # Electrum subscriptions are long-lived; nginx's default 10
-              # minute timeout drops idle Sparrow Wallet connections.
-              proxy_timeout 1h;
-              proxy_connect_timeout 5s;
-            }
-          '';
-        };
+        # Frigate now occupies the canonical Electrum ports (50001/50002).
+        # Move the local backend off 50001 so the two don't collide. The
+        # value mirrors `services.frigate.electrumBackend` above; keep
+        # them in sync if you change it. mkDefault so a consumer running
+        # their own fulcrum out of band can still override.
+        services.fulcrum.port = lib.mkDefault 60001;
+
         networking.firewall.allowedTCPPorts = [ cfg.publicPort ];
       }
+
+      # Pair bitcoind's ZMQ sequence publisher with frigate's
+      # `zmqSequenceEndpoint`. Only wired here when the preset is
+      # managing bitcoind — a consumer running bitcoind out of band must
+      # add `zmqpubsequence=tcp://127.0.0.1:28336` themselves, or
+      # mkForce `services.frigate.bitcoind.zmqSequenceEndpoint = null`
+      # to fall back to polling (and accept the upstream warning).
+      (lib.mkIf cfg.bitcoind.manage {
+        services.bitcoind.extraConfig = ''
+          zmqpubsequence=tcp://127.0.0.1:28336
+        '';
+      })
 
       # ACME path: a minimal HTTP vhost on port 80 hosts the HTTP-01
       # challenge so Let's Encrypt can verify domain ownership. NixOS's
       # `enableACME` wires `security.acme.certs.<host>` and the challenge
       # location automatically; the `404` covers anything else hitting
-      # this vhost.
+      # this vhost. nginx is only here for ACME — TLS termination for
+      # the Electrum stream is frigate's job.
       (lib.mkIf (cfg.tls.acmeEmail != null) {
         security.acme = {
           acceptTerms = true;
           defaults.email = cfg.tls.acmeEmail;
         };
 
-        services.nginx.virtualHosts.${cfg.host} = {
-          enableACME = true;
-          locations."/".return = "404";
+        services.nginx = {
+          enable = true;
+          virtualHosts.${cfg.host} = {
+            enableACME = true;
+            locations."/".return = "404";
+          };
         };
 
         networking.firewall.allowedTCPPorts = [ 80 ];
 
-        # nginx reads cert files from /var/lib/acme; the acme group owns
-        # them.
-        users.users.nginx.extraGroups = [ "acme" ];
+        # Block frigate startup until the cert exists, otherwise it
+        # crash-loops on `cert.pem: No such file or directory` during a
+        # fresh deploy. `wants` (not `requires`) so a transient acme
+        # failure later doesn't take frigate down with it. List values
+        # under `systemd.services.<name>` accumulate via module merging,
+        # so this composes with the bitcoind/fulcrum deps above.
+        systemd.services.frigate.after = [ "acme-${cfg.host}.service" ];
+        systemd.services.frigate.wants = [ "acme-${cfg.host}.service" ];
       })
     ]
   );

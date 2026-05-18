@@ -33,18 +33,46 @@ let
   }
   // lib.optionalAttrs (cfg.bitcoind.authType == "USERPASS") {
     auth = "@FRIGATE_BITCOIND_AUTH@";
+  }
+  // lib.optionalAttrs (cfg.bitcoind.zmqSequenceEndpoint != null) {
+    zmqSequenceEndpoint = cfg.bitcoind.zmqSequenceEndpoint;
+  };
+
+  serverSettings = {
+    host = cfg.host;
+    backendElectrumServer = cfg.electrumBackend;
+  }
+  // lib.optionalAttrs (cfg.tcp != null && cfg.tcp != "") {
+    tcp = cfg.tcp;
+  }
+  // lib.optionalAttrs (cfg.ssl != null) {
+    ssl = cfg.ssl;
+    sslCert = toString cfg.sslCert;
+    sslKey = toString cfg.sslKey;
   };
 
   baseSettings = lib.recursiveUpdate {
     core = coreSettings;
-    server = {
-      host = cfg.host;
-      tcpPort = cfg.tcpPort;
-      backendElectrumServer = cfg.electrumBackend;
-    };
+    server = serverSettings;
     scan.computeBackend = cfg.computeBackend;
     database.url = "jdbc:duckdb:${configDir}/frigate.duckdb";
   } cfg.settings;
+
+  # Extract the port number from a "scheme://host:port" listener URL.
+  # Returns null for non-matching strings or for empty/null inputs, which
+  # the firewall logic below treats as "no port to open".
+  portFromUrl =
+    url:
+    if url == null || url == "" then
+      null
+    else
+      let
+        m = builtins.match "^(tcp|ssl)://[^:/?#]+:([0-9]+).*$" url;
+      in
+      if m == null then null else lib.toInt (builtins.elemAt m 1);
+
+  tcpPortFromUrl = portFromUrl cfg.tcp;
+  sslPortFromUrl = portFromUrl cfg.ssl;
 
   configTemplate = tomlFormat.generate "frigate-config.toml" baseSettings;
 in
@@ -104,14 +132,59 @@ in
       '';
     };
 
-    tcpPort = mkOption {
-      type = types.port;
-      default = 57001;
+    tcp = mkOption {
+      type = types.nullOr types.str;
+      default = "tcp://0.0.0.0:50001";
+      example = "tcp://127.0.0.1:50001";
+      description = ''
+        Plaintext Electrum listener bind URL. Defaults to the canonical
+        Electrum plaintext port on all interfaces, matching Frigate's
+        upstream default — gate public exposure via the firewall, not by
+        leaving this on a loopback bind.
+
+        Set to `null` (or `""`) to disable the plaintext listener
+        entirely, e.g. when only TLS is wanted.
+      '';
+    };
+
+    ssl = mkOption {
+      type = types.nullOr types.str;
+      default = null;
+      example = "ssl://0.0.0.0:50002";
+      description = ''
+        TLS Electrum listener bind URL. When set, `sslCert` and `sslKey`
+        must also be provided. Frigate negotiates TLS 1.2 and 1.3 only;
+        TLS 1.0/1.1 and SSLv3 are unconditionally disabled.
+      '';
+    };
+
+    sslCert = mkOption {
+      type = types.nullOr types.path;
+      default = null;
+      description = ''
+        PEM certificate (single cert or fullchain). Required when `ssl`
+        is set. The frigate service must be able to read this path —
+        typically that means adding the file's group to
+        `extraSupplementaryGroups` (e.g. `acme` for NixOS-managed certs).
+      '';
+    };
+
+    sslKey = mkOption {
+      type = types.nullOr types.path;
+      default = null;
+      description = ''
+        PKCS#8 PEM private key matching `sslCert`. Required when `ssl`
+        is set.
+      '';
     };
 
     openFirewall = mkOption {
       type = types.bool;
       default = false;
+      description = ''
+        Open the firewall for the ports parsed out of `tcp` and `ssl`.
+        Ports that cannot be parsed (e.g. unset listeners) are skipped.
+      '';
     };
 
     electrumBackend = mkOption {
@@ -186,6 +259,35 @@ in
           service start. Required when `authType = "USERPASS"`.
         '';
       };
+
+      zmqSequenceEndpoint = mkOption {
+        type = types.nullOr types.str;
+        default = null;
+        example = "tcp://127.0.0.1:28336";
+        description = ''
+          Bitcoin Core's ZMQ `sequence` publisher endpoint. When set,
+          Frigate subscribes for sub-100ms mempool ingestion instead of
+          polling. Requires bitcoind to be started with
+          `-zmqpubsequence=<this-url>`.
+
+          Upstream strongly recommends configuring this whenever
+          `electrumBackend` is set, otherwise the backend may notify the
+          client of a new transaction via scripthash before Frigate's
+          silent-payments notification lands and wallets briefly display
+          incorrect amounts.
+        '';
+      };
+    };
+
+    extraSupplementaryGroups = mkOption {
+      type = types.listOf types.str;
+      default = [ ];
+      example = [ "acme" ];
+      description = ''
+        Additional systemd `SupplementaryGroups` for the frigate service.
+        `video` and `render` are added unconditionally for GPU access.
+        Add `acme` when `sslCert`/`sslKey` live under `/var/lib/acme/`.
+      '';
     };
 
     gpuDevices = mkOption {
@@ -234,10 +336,20 @@ in
           cfg.bitcoind.authType != "COOKIE" || !cfg.bitcoind.enable || cfg.bitcoind.cookieDir != null;
         message = "services.frigate.bitcoind.cookieDir must be set when authType = \"COOKIE\".";
       }
+      {
+        assertion = (cfg.ssl == null) || (cfg.sslCert != null && cfg.sslKey != null);
+        message = "services.frigate.ssl requires both services.frigate.sslCert and services.frigate.sslKey.";
+      }
+      {
+        assertion = (cfg.tcp != null && cfg.tcp != "") || cfg.ssl != null;
+        message = "services.frigate needs at least one of `tcp` or `ssl` configured.";
+      }
     ];
 
     networking.firewall = lib.mkIf cfg.openFirewall {
-      allowedTCPPorts = [ cfg.tcpPort ];
+      allowedTCPPorts =
+        lib.optional (tcpPortFromUrl != null) tcpPortFromUrl
+        ++ lib.optional (sslPortFromUrl != null) sslPortFromUrl;
     };
 
     # Expose `frigate` and `frigate-cli` on system PATH for operator
@@ -300,7 +412,8 @@ in
         SupplementaryGroups = [
           "video"
           "render"
-        ];
+        ]
+        ++ cfg.extraSupplementaryGroups;
         DevicePolicy = "closed";
         DeviceAllow = cfg.gpuDevices;
         PrivateDevices = false;

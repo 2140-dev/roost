@@ -6,9 +6,9 @@
 
 # End-to-end test for the public-frigate preset, exercised through
 # `nixosModules.default`. Boots the entire stack — bitcoind + fulcrum +
-# frigate + nginx-TLS — on regtest, mines 101 blocks, verifies frigate
-# answers Electrum queries both on its internal port and through the
-# preset's TLS termination on the public port.
+# frigate — on regtest, mines 101 blocks, verifies fulcrum is alive on
+# the backend port and frigate answers Electrum queries both on its
+# plaintext listener and over its native TLS listener.
 let
   selfSignedCert =
     pkgs.runCommand "test-self-signed-cert"
@@ -44,10 +44,10 @@ pkgs.testers.runNixOSTest {
         enable = true;
         host = "test.local";
         network = "regtest";
-        # Self-signed cert so the nginx-TLS layer can come up without ACME.
-        # The test only verifies the byte-level Electrum response, not chain
-        # of trust, so SNI/hostname validation is intentionally skipped on
-        # the client side.
+        # Self-signed cert so frigate's native TLS listener can come up
+        # without ACME. The test only verifies the byte-level Electrum
+        # response, not chain of trust, so SNI/hostname validation is
+        # intentionally skipped on the client side.
         tls.certificateFile = "${selfSignedCert}/cert.pem";
         tls.keyFile = "${selfSignedCert}/key.pem";
       };
@@ -66,8 +66,11 @@ pkgs.testers.runNixOSTest {
         # Disable the "is the tip recent?" check that gates IBD exit. In a
         # test VM the clock can drift between boot and mining, leaving the
         # IBD flag stuck at `true` even with 101 freshly-mined blocks. Same
-        # trick bitcoind's own functional tests use.
-        extraConfig = lib.mkForce ''
+        # trick bitcoind's own functional tests use. Plain assignment (no
+        # mkForce) so the preset's `zmqpubsequence=...` line — wired up
+        # for frigate 1.5.0's low-latency mempool ingestion — still gets
+        # merged in via the `types.lines` accumulation.
+        extraConfig = ''
           maxtipage=2147483647
         '';
       };
@@ -111,37 +114,42 @@ pkgs.testers.runNixOSTest {
           timeout=30,
       )
 
+      # Fulcrum has been moved off 50001 so frigate can occupy the
+      # canonical Electrum ports. Verify it's alive on the new backend
+      # port and has indexed to the mined tip — frigate proxies all
+      # non-silent-payments traffic here.
       machine.wait_for_unit("fulcrum.service")
-      machine.wait_for_open_port(50001)
+      machine.wait_for_open_port(60001)
       machine.wait_until_succeeds(
           "echo '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"blockchain.headers.subscribe\",\"params\":[]}'"
-          " | nc -q 1 127.0.0.1 50001"
+          " | nc -q 1 127.0.0.1 60001"
           " | grep -q '\"height\":101'",
           timeout=120,
       )
 
-      # Frigate answers on its internal port — no TLS, this is what nginx
-      # proxies to. Electrum protocol requires `server.version` as the first
-      # message on any new connection; frigate enforces this and rejects
-      # anything else with VersionNotNegotiatedException. Pipe both requests
-      # through one nc invocation so they share a connection.
+      # Frigate's plaintext listener now sits on the canonical Electrum
+      # port (50001). Electrum protocol requires `server.version` as the
+      # first message on any new connection; frigate enforces this and
+      # rejects anything else with VersionNotNegotiatedException. Pipe
+      # both requests through one nc invocation so they share a
+      # connection.
       machine.wait_for_unit("frigate.service")
-      machine.wait_for_open_port(57001)
+      machine.wait_for_open_port(50001)
       internal = machine.succeed(
           "{ echo '{\"jsonrpc\":\"2.0\",\"id\":0,\"method\":\"server.version\",\"params\":[\"test\",\"1.4\"]}'"
           "; echo '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"server.features\",\"params\":[]}'; }"
-          " | nc -q 1 127.0.0.1 57001"
+          " | nc -q 1 127.0.0.1 50001"
       )
-      print("frigate internal response:", internal)
-      assert "test.local" in internal, f"internal server.features missing configured host: {internal}"
+      print("frigate plaintext response:", internal)
+      assert "test.local" in internal, f"plaintext server.features missing configured host: {internal}"
 
-      # nginx terminates TLS on the public port and stream-proxies to frigate.
-      # `-ign_eof` keeps s_client reading from the TLS socket after stdin
-      # closes, so we don't race nginx's response against socket teardown.
-      # `-servername` provides an explicit SNI matching the self-signed cert.
-      # `timeout` bounds the wait; production deployments would use ACME and
-      # full chain verification.
-      machine.wait_for_unit("nginx.service")
+      # Frigate terminates TLS itself on the public port (50002) using
+      # the self-signed cert wired into the preset above. `-ign_eof`
+      # keeps s_client reading after stdin closes so we don't race the
+      # response against socket teardown. `-servername` provides an
+      # explicit SNI matching the self-signed cert. `timeout` bounds the
+      # wait; production deployments would use ACME and full chain
+      # verification.
       machine.wait_for_open_port(50002)
       public = machine.succeed(
           "{ echo '{\"jsonrpc\":\"2.0\",\"id\":0,\"method\":\"server.version\",\"params\":[\"test\",\"1.4\"]}'"
@@ -149,7 +157,7 @@ pkgs.testers.runNixOSTest {
           " | timeout 5 openssl s_client -connect 127.0.0.1:50002 -servername test.local"
           " -quiet -ign_eof 2>/dev/null || true"
       )
-      print("frigate public TLS response:", public)
-      assert "test.local" in public, f"public server.features missing configured host: {public}"
+      print("frigate TLS response:", public)
+      assert "test.local" in public, f"TLS server.features missing configured host: {public}"
     '';
 }
