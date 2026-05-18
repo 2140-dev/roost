@@ -278,14 +278,14 @@ in
           defaults.email = cfg.tls.acmeEmail;
         };
 
-        # The nginx module sets `security.acme.certs.<host>.group =
-        # mkDefault "nginx"` for every vhost with `enableACME = true`.
-        # That's right when nginx terminates TLS, but here nginx only
-        # serves the HTTP-01 challenge and frigate is the actual
-        # consumer of the issued cert. Override to `acme` (matches
-        # frigate's supplementary group); add frigate to reloadServices
-        # so a renewal hot-swaps the cert without a stale-cert window
-        # (it concatenates with the nginx module's default entry).
+        # Manage the cert directly via `webroot` HTTP-01 rather than
+        # nginx's `enableACME` shorthand. The shorthand auto-registers
+        # nginx (and `nginx-config-reload.service` as root) as cert
+        # consumers and adds an assertion that the cert be readable by
+        # both — but our cert lives in the `acme` group for frigate,
+        # and neither nginx nor the reload service joins it. nginx
+        # here only needs to serve the HTTP-01 challenge files lego
+        # drops into the webroot; it never touches the issued cert.
         #
         # postRun: frigate's TLS loader only accepts PKCS#8
         # (`BEGIN PRIVATE KEY`), but lego emits EC keys in SEC1
@@ -296,6 +296,8 @@ in
         # owned the way NixOS would have set it. Idempotent — running
         # `openssl pkcs8 -topk8` on an already-PKCS#8 key is a no-op.
         security.acme.certs.${cfg.host} = {
+          domain = cfg.host;
+          webroot = "/var/lib/acme/acme-challenge";
           group = "acme";
           reloadServices = [ "frigate.service" ];
           postRun = ''
@@ -310,7 +312,7 @@ in
         services.nginx = {
           enable = true;
           virtualHosts.${cfg.host} = {
-            enableACME = true;
+            locations."/.well-known/acme-challenge/".root = "/var/lib/acme/acme-challenge";
             locations."/".return = "404";
           };
         };
