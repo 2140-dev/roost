@@ -278,6 +278,19 @@ in
           defaults.email = cfg.tls.acmeEmail;
         };
 
+        # The nginx module sets `security.acme.certs.<host>.group =
+        # mkDefault "nginx"` for every vhost with `enableACME = true`.
+        # That's right when nginx terminates TLS, but here nginx only
+        # serves the HTTP-01 challenge and frigate is the actual
+        # consumer of the issued cert. Override to `acme` (matches
+        # frigate's supplementary group); add frigate to reloadServices
+        # so a renewal hot-swaps the cert without a stale-cert window
+        # (it concatenates with the nginx module's default entry).
+        security.acme.certs.${cfg.host} = {
+          group = "acme";
+          reloadServices = [ "frigate.service" ];
+        };
+
         services.nginx = {
           enable = true;
           virtualHosts.${cfg.host} = {
