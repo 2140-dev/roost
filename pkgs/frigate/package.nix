@@ -21,13 +21,13 @@ let
 in
 stdenv.mkDerivation (finalAttrs: {
   pname = "frigate";
-  version = "1.4.1";
+  version = "1.5.0";
 
   src = fetchFromGitHub {
     owner = "sparrowwallet";
     repo = "frigate";
-    rev = "0d4f5159531ed6f6d0a2364605eba2bec3766aff";
-    hash = "sha256-dHKQTepvmj7YSIIDBKL09tF+Fotk/O45fUD6sFS7zmA=";
+    rev = "116d62bb0eaeb70a357068fecd1e202914772597";
+    hash = "sha256-xvjR5pgtF/AtV5941w1RIkJEWdbjTDBPMpu24TsxPWY=";
   };
 
   postUnpack = ''
@@ -52,6 +52,21 @@ stdenv.mkDerivation (finalAttrs: {
     # run — the jlink output is what we install.
     substituteInPlace build.gradle \
       --replace-fail "tasks.jlink.finalizedBy('addUserWritePermission')" ""
+
+    # The nixpkgs nixDownloadDeps task resolves every resolvable
+    # configuration, including `:compileClasspath`. That triggers the
+    # extra-java-module-info transform, which wants to inspect the
+    # drongo.jar produced by the `:drongo` subproject — but
+    # nixDownloadDeps doesn't depend on that build, so the jar doesn't
+    # exist yet and resolution fails. `skipLocalJars` does not cover the
+    # case where the artifact comes from a project(:foo) dependency, so
+    # we add an explicit task dependency to force drongo to build first.
+    cat >> build.gradle <<'EOG'
+
+    tasks.matching { it.name == 'nixDownloadDeps' && it.project == rootProject }.configureEach {
+      dependsOn ':drongo:jar'
+    }
+    EOG
   '';
 
   nativeBuildInputs = [
