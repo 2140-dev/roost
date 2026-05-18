@@ -8,7 +8,19 @@
 let
   cfg = config.services.public-frigate;
 
-  # When ACME issues the cert, nginx writes it to `/var/lib/acme/<host>/`.
+  # Frigate occupies the canonical Electrum ports (50001 plaintext,
+  # `publicPort` for TLS); the backend Electrum server (fulcrum) moves
+  # off 50001 to this non-conflicting port. The README example uses
+  # 60001. Captured here so the fulcrum listen port and frigate's
+  # `electrumBackend` URL can't drift apart.
+  backendPort = 60001;
+
+  # ZMQ `sequence` publisher endpoint. Bitcoin Core opens the socket
+  # (via `zmqpubsequence=...`) and Frigate subscribes to it (via
+  # `core.zmqSequenceEndpoint`). Both sides must match exactly.
+  zmqSequenceEndpoint = "tcp://127.0.0.1:28336";
+
+  # When ACME issues the cert, the files live under `/var/lib/acme/<host>/`.
   # When the consumer brings their own, we point straight at their files.
   certFile =
     if cfg.tls.certificateFile != null then
@@ -28,8 +40,9 @@ in
       example = "frigate.example.com";
       description = ''
         Public DNS name for this server. Advertised in the Electrum
-        `server.features` response and used as the nginx server_name for
-        TLS termination.
+        `server.features` response, used as the SAN clients validate
+        against the served TLS certificate, and — when `tls.acmeEmail`
+        is set — as the `security.acme.certs.<name>` identifier.
       '';
     };
 
@@ -197,9 +210,9 @@ in
             server = "http://127.0.0.1:8332";
             authType = "COOKIE";
             cookieDir = "/var/lib/bitcoind";
-            zmqSequenceEndpoint = "tcp://127.0.0.1:28336";
+            inherit zmqSequenceEndpoint;
           };
-          electrumBackend = "tcp://127.0.0.1:60001";
+          electrumBackend = "tcp://127.0.0.1:${toString backendPort}";
           # ACME-issued certs live in /var/lib/acme/<host>/ owned by the
           # `acme` group. Frigate reads them at startup, so its service
           # needs the group. Skipped for manual-cert deployments where
@@ -218,12 +231,10 @@ in
           "fulcrum.service"
         ];
 
-        # Frigate now occupies the canonical Electrum ports (50001/50002).
-        # Move the local backend off 50001 so the two don't collide. The
-        # value mirrors `services.frigate.electrumBackend` above; keep
-        # them in sync if you change it. mkDefault so a consumer running
-        # their own fulcrum out of band can still override.
-        services.fulcrum.port = lib.mkDefault 60001;
+        # Move fulcrum off 50001 so frigate can occupy the canonical
+        # Electrum ports. mkDefault so a consumer running their own
+        # fulcrum out of band can still override.
+        services.fulcrum.port = lib.mkDefault backendPort;
 
         networking.firewall.allowedTCPPorts = [ cfg.publicPort ];
       }
@@ -231,12 +242,13 @@ in
       # Pair bitcoind's ZMQ sequence publisher with frigate's
       # `zmqSequenceEndpoint`. Only wired here when the preset is
       # managing bitcoind — a consumer running bitcoind out of band must
-      # add `zmqpubsequence=tcp://127.0.0.1:28336` themselves, or
-      # mkForce `services.frigate.bitcoind.zmqSequenceEndpoint = null`
-      # to fall back to polling (and accept the upstream warning).
+      # add `zmqpubsequence=...` (matching the endpoint above)
+      # themselves, or mkForce
+      # `services.frigate.bitcoind.zmqSequenceEndpoint = null` to fall
+      # back to polling (and accept the upstream warning).
       (lib.mkIf cfg.bitcoind.manage {
         services.bitcoind.extraConfig = ''
-          zmqpubsequence=tcp://127.0.0.1:28336
+          zmqpubsequence=${zmqSequenceEndpoint}
         '';
       })
 
@@ -263,11 +275,11 @@ in
         networking.firewall.allowedTCPPorts = [ 80 ];
 
         # Block frigate startup until the cert exists, otherwise it
-        # crash-loops on `cert.pem: No such file or directory` during a
-        # fresh deploy. `wants` (not `requires`) so a transient acme
-        # failure later doesn't take frigate down with it. List values
-        # under `systemd.services.<name>` accumulate via module merging,
-        # so this composes with the bitcoind/fulcrum deps above.
+        # crash-loops on a missing `fullchain.pem` during a fresh
+        # deploy. `wants` (not `requires`) so a transient acme failure
+        # later doesn't take frigate down with it. List values under
+        # `systemd.services.<name>` accumulate via module merging, so
+        # this composes with the bitcoind/fulcrum deps above.
         systemd.services.frigate.after = [ "acme-${cfg.host}.service" ];
         systemd.services.frigate.wants = [ "acme-${cfg.host}.service" ];
       })

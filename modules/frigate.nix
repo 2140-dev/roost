@@ -63,13 +63,10 @@ let
   # the firewall logic below treats as "no port to open".
   portFromUrl =
     url:
-    if url == null || url == "" then
-      null
-    else
-      let
-        m = builtins.match "^(tcp|ssl)://[^:/?#]+:([0-9]+).*$" url;
-      in
-      if m == null then null else lib.toInt (builtins.elemAt m 1);
+    let
+      m = if url == null || url == "" then null else builtins.match "[a-z]+://[^:/?#]+:([0-9]+).*" url;
+    in
+    if m == null then null else lib.toInt (builtins.head m);
 
   tcpPortFromUrl = portFromUrl cfg.tcp;
   sslPortFromUrl = portFromUrl cfg.ssl;
