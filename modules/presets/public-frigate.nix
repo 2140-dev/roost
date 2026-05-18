@@ -15,22 +15,25 @@ let
   # `electrumBackend` URL can't drift apart.
   backendPort = 60001;
 
-  # ZMQ `sequence` publisher endpoint. Bitcoin Core opens the socket
-  # (via `zmqpubsequence=...`) and Frigate subscribes to it (via
-  # `core.zmqSequenceEndpoint`). Both sides must match exactly.
+  # The local frigate process always reads ZMQ off loopback; that's a
+  # constant. When `exposeBackends` is on, bitcoind additionally binds
+  # the same socket on the mesh address so edge consumers can subscribe
+  # — see the publish endpoint below.
   zmqSequenceEndpoint = "tcp://127.0.0.1:28336";
 
-  # When ACME issues the cert, the files live under `/var/lib/acme/<host>/`.
-  # When the consumer brings their own, we point straight at their files.
-  certFile =
-    if cfg.tls.certificateFile != null then
-      cfg.tls.certificateFile
-    else
-      "/var/lib/acme/${cfg.host}/fullchain.pem";
-  keyFile = if cfg.tls.keyFile != null then cfg.tls.keyFile else "/var/lib/acme/${cfg.host}/key.pem";
+  # Where bitcoind opens the ZMQ socket. With no edge consumers, bind
+  # to loopback only. With `exposeBackends.enable`, bind to 0.0.0.0 so
+  # both local frigate (via 127.0.0.1) and remote edge frigate (via
+  # `bindAddress`) can subscribe; the firewall scopes outside access
+  # to `exposeBackends.interface` only.
+  zmqPublishBind = if cfg.exposeBackends.enable then "0.0.0.0" else "127.0.0.1";
+  zmqPublishEndpoint = "tcp://${zmqPublishBind}:28336";
 in
 {
-  imports = [ ../frigate.nix ];
+  imports = [
+    ../frigate.nix
+    ../_internal/frigate-tls-acme.nix
+  ];
 
   options.services.public-frigate = with lib; {
     enable = mkEnableOption "public-facing Frigate silent payments server";
@@ -113,6 +116,61 @@ in
       '';
     };
 
+    exposeBackends = {
+      enable = mkEnableOption "expose bitcoind RPC/ZMQ and fulcrum for edge consumers";
+
+      bindAddress = mkOption {
+        type = types.str;
+        example = "10.42.0.1";
+        description = ''
+          Additional address bitcoind RPC, ZMQ sequence, and fulcrum
+          bind to (in addition to their loopback defaults). Typically
+          this host's mesh IP — see `roost.nixosModules.wireguard-mesh`.
+        '';
+      };
+
+      interface = mkOption {
+        type = types.str;
+        example = "wg0";
+        description = ''
+          Interface name used to scope the firewall rules that open the
+          backend ports. Only traffic arriving on this interface is
+          accepted; the backends remain unreachable from the public
+          internet.
+        '';
+      };
+
+      allowedPeers = mkOption {
+        type = types.listOf types.str;
+        example = [ "10.42.0.2/32" ];
+        description = ''
+          Source CIDRs added to bitcoind's `rpcallowip`. Must include
+          every edge consumer's mesh IP (/32) that needs to talk to the
+          backends. Loopback is always allowed.
+        '';
+      };
+
+      rpcAuth = {
+        user = mkOption {
+          type = types.str;
+          example = "frigate-edge";
+          description = "RPC user name added to bitcoind for edge consumers.";
+        };
+
+        passwordHMAC = mkOption {
+          type = types.str;
+          example = "f7efda5c189b999524f151318c0c86$d5b51b3beffbc02b724e5d095828e0bc8b2456e9ac8757ae3211a5d9b16a22ae";
+          description = ''
+            Literal `salt$hash` portion of an rpcauth line, as produced
+            by bitcoind's `rpcauth.py`. Committed to nix config — the
+            HMAC is one-way derived from the password; only the
+            corresponding plaintext is a secret (lives on the edge
+            consumer).
+          '';
+        };
+      };
+    };
+
     # Sentinel attribute, mirroring nix-bitcoin's `secure-node-preset-enabled`.
     # Lets downstream modules and tests detect activation without re-checking
     # every individual service.
@@ -126,6 +184,15 @@ in
   config = lib.mkIf cfg.enable (
     lib.mkMerge [
       { services.public-frigate.preset-enabled = { }; }
+
+      # TLS + ACME wiring is shared with frigate-edge; delegate to the
+      # private helper module. TLS-mutex assertions live there too.
+      {
+        services._roost.frigate-tls-acme = {
+          enable = true;
+          inherit (cfg) host tls;
+        };
+      }
 
       {
         assertions = [
@@ -148,22 +215,6 @@ in
               services.public-frigate requires services.fulcrum.enable = true.
               Either import nix-bitcoin (which provides the fulcrum module)
               and enable it, or set services.public-frigate.fulcrum.manage = true.
-            '';
-          }
-          {
-            assertion =
-              (cfg.tls.acmeEmail == null) || (cfg.tls.certificateFile == null && cfg.tls.keyFile == null);
-            message = ''
-              services.public-frigate.tls.acmeEmail is mutually exclusive with
-              tls.certificateFile / tls.keyFile.
-            '';
-          }
-          {
-            assertion =
-              (cfg.tls.acmeEmail != null) || (cfg.tls.certificateFile != null && cfg.tls.keyFile != null);
-            message = ''
-              services.public-frigate requires either tls.acmeEmail (for ACME)
-              or both tls.certificateFile and tls.keyFile (for a manual cert).
             '';
           }
         ];
@@ -197,14 +248,15 @@ in
         # all public traffic comes in over `ssl`. The backend Electrum
         # server (fulcrum/electrs/etc.) listens on a non-conflicting port
         # so frigate can occupy the canonical Electrum ports.
+        #
+        # `sslCert`, `sslKey` and `extraSupplementaryGroups` are set by
+        # the shared TLS+ACME helper (imported above).
         services.frigate = {
           enable = true;
           host = cfg.host;
           network = cfg.network;
           tcp = "tcp://127.0.0.1:50001";
           ssl = "ssl://0.0.0.0:${toString cfg.publicPort}";
-          sslCert = certFile;
-          sslKey = keyFile;
           bitcoind = {
             enable = true;
             server = "http://127.0.0.1:8332";
@@ -213,11 +265,6 @@ in
             inherit zmqSequenceEndpoint;
           };
           electrumBackend = "tcp://127.0.0.1:${toString backendPort}";
-          # ACME-issued certs live in /var/lib/acme/<host>/ owned by the
-          # `acme` group. Frigate reads them at startup, so its service
-          # needs the group. Skipped for manual-cert deployments where
-          # the operator has already arranged read access.
-          extraSupplementaryGroups = lib.optional (cfg.tls.acmeEmail != null) "acme";
         };
 
         users.users.frigate.extraGroups = [ "bitcoin" ];
@@ -260,73 +307,71 @@ in
       # the nix-bitcoin module already assigns the string.
       (lib.mkIf cfg.bitcoind.manage {
         services.bitcoind.extraConfig = ''
-          zmqpubsequence=${zmqSequenceEndpoint}
+          zmqpubsequence=${zmqPublishEndpoint}
         '';
         systemd.services.bitcoind.serviceConfig.RestrictAddressFamilies =
           lib.mkForce "AF_UNIX AF_INET AF_INET6 AF_NETLINK";
       })
 
-      # ACME path: a minimal HTTP vhost on port 80 hosts the HTTP-01
-      # challenge so Let's Encrypt can verify domain ownership. NixOS's
-      # `enableACME` wires `security.acme.certs.<host>` and the challenge
-      # location automatically; the `404` covers anything else hitting
-      # this vhost. nginx is only here for ACME — TLS termination for
-      # the Electrum stream is frigate's job.
-      (lib.mkIf (cfg.tls.acmeEmail != null) {
-        security.acme = {
-          acceptTerms = true;
-          defaults.email = cfg.tls.acmeEmail;
-        };
+      # exposeBackends: bind bitcoind RPC + ZMQ + fulcrum on the mesh
+      # interface for an edge consumer. Only honored when the preset is
+      # managing those services locally — exposing services we don't
+      # manage would be a contract violation.
+      #
+      # bitcoind RPC: nix-bitcoin's `rpc.address` is single-valued, so
+      # we keep the typed loopback default and append a second
+      # `rpcbind=` via extraConfig. bitcoind accepts repeated rpcbind
+      # lines and binds each one.
+      #
+      # ZMQ: the publish endpoint above (`zmqPublishEndpoint`) already
+      # flips to 0.0.0.0 when exposeBackends is on — no extraConfig
+      # work needed here for ZMQ.
+      #
+      # fulcrum: same single-bind option pattern as bitcoind RPC. The
+      # typed `address` stays on loopback; an extra `tcp = ...` line is
+      # appended via `extraConfig` for the mesh address.
+      (lib.mkIf cfg.exposeBackends.enable {
+        assertions = [
+          {
+            assertion = cfg.bitcoind.manage;
+            message = ''
+              services.public-frigate.exposeBackends.enable requires
+              services.public-frigate.bitcoind.manage = true. The preset
+              cannot expose a bitcoind it does not configure.
+            '';
+          }
+          {
+            assertion = cfg.fulcrum.manage;
+            message = ''
+              services.public-frigate.exposeBackends.enable requires
+              services.public-frigate.fulcrum.manage = true. The preset
+              cannot expose a fulcrum it does not configure.
+            '';
+          }
+        ];
 
-        # Manage the cert directly via `webroot` HTTP-01 rather than
-        # nginx's `enableACME` shorthand. The shorthand auto-registers
-        # nginx (and `nginx-config-reload.service` as root) as cert
-        # consumers and adds an assertion that the cert be readable by
-        # both — but our cert lives in the `acme` group for frigate,
-        # and neither nginx nor the reload service joins it. nginx
-        # here only needs to serve the HTTP-01 challenge files lego
-        # drops into the webroot; it never touches the issued cert.
-        #
-        # postRun: frigate's TLS loader only accepts PKCS#8
-        # (`BEGIN PRIVATE KEY`), but lego emits EC keys in SEC1
-        # (`BEGIN EC PRIVATE KEY`) and RSA keys in PKCS#1
-        # (`BEGIN RSA PRIVATE KEY`). Convert key.pem in place after
-        # each issuance/renewal so frigate can parse it. Runs as root
-        # in the cert directory; `chown acme:acme` keeps the file
-        # owned the way NixOS would have set it. Idempotent — running
-        # `openssl pkcs8 -topk8` on an already-PKCS#8 key is a no-op.
-        security.acme.certs.${cfg.host} = {
-          domain = cfg.host;
-          webroot = "/var/lib/acme/acme-challenge";
-          group = "acme";
-          reloadServices = [ "frigate.service" ];
-          postRun = ''
-            umask 0027
-            ${pkgs.openssl}/bin/openssl pkcs8 -topk8 -nocrypt \
-              -in key.pem -out key.pem.pkcs8
-            chown acme:acme key.pem.pkcs8
-            mv key.pem.pkcs8 key.pem
+        services.bitcoind = {
+          rpc.allowip = [ "127.0.0.1" ] ++ cfg.exposeBackends.allowedPeers;
+          rpc.users.${cfg.exposeBackends.rpcAuth.user} = {
+            inherit (cfg.exposeBackends.rpcAuth) passwordHMAC;
+          };
+          extraConfig = ''
+            rpcbind=${cfg.exposeBackends.bindAddress}
           '';
         };
 
-        services.nginx = {
-          enable = true;
-          virtualHosts.${cfg.host} = {
-            locations."/.well-known/acme-challenge/".root = "/var/lib/acme/acme-challenge";
-            locations."/".return = "404";
-          };
-        };
+        services.fulcrum.extraConfig = ''
+          tcp = ${cfg.exposeBackends.bindAddress}:${toString backendPort}
+        '';
 
-        networking.firewall.allowedTCPPorts = [ 80 ];
-
-        # Block frigate startup until the cert exists, otherwise it
-        # crash-loops on a missing `fullchain.pem` during a fresh
-        # deploy. `wants` (not `requires`) so a transient acme failure
-        # later doesn't take frigate down with it. List values under
-        # `systemd.services.<name>` accumulate via module merging, so
-        # this composes with the bitcoind/fulcrum deps above.
-        systemd.services.frigate.after = [ "acme-${cfg.host}.service" ];
-        systemd.services.frigate.wants = [ "acme-${cfg.host}.service" ];
+        # Scope the open ports to the mesh interface only. Outside
+        # traffic (e.g. the public internet on eth0) is dropped at
+        # INPUT by NixOS's default-deny firewall posture.
+        networking.firewall.interfaces.${cfg.exposeBackends.interface}.allowedTCPPorts = [
+          8332
+          28336
+          backendPort
+        ];
       })
     ]
   );
