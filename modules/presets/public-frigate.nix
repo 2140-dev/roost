@@ -286,9 +286,25 @@ in
         # frigate's supplementary group); add frigate to reloadServices
         # so a renewal hot-swaps the cert without a stale-cert window
         # (it concatenates with the nginx module's default entry).
+        #
+        # postRun: frigate's TLS loader only accepts PKCS#8
+        # (`BEGIN PRIVATE KEY`), but lego emits EC keys in SEC1
+        # (`BEGIN EC PRIVATE KEY`) and RSA keys in PKCS#1
+        # (`BEGIN RSA PRIVATE KEY`). Convert key.pem in place after
+        # each issuance/renewal so frigate can parse it. Runs as root
+        # in the cert directory; `chown acme:acme` keeps the file
+        # owned the way NixOS would have set it. Idempotent — running
+        # `openssl pkcs8 -topk8` on an already-PKCS#8 key is a no-op.
         security.acme.certs.${cfg.host} = {
           group = "acme";
           reloadServices = [ "frigate.service" ];
+          postRun = ''
+            umask 0027
+            ${pkgs.openssl}/bin/openssl pkcs8 -topk8 -nocrypt \
+              -in key.pem -out key.pem.pkcs8
+            chown acme:acme key.pem.pkcs8
+            mv key.pem.pkcs8 key.pem
+          '';
         };
 
         services.nginx = {
