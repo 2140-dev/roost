@@ -56,6 +56,8 @@
         frigate = ./modules/frigate.nix;
         hetzner-bare-metal = ./modules/presets/hetzner-bare-metal.nix;
         public-frigate = ./modules/presets/public-frigate.nix;
+        frigate-edge = ./modules/presets/frigate-edge.nix;
+        wireguard-mesh = ./modules/wireguard-mesh.nix;
 
         # Batteries-included entry point. Bundles nix-bitcoin so the
         # consumer needs only `roost` in their flake inputs to deploy a
@@ -102,6 +104,34 @@
             inherit pkgs extraModules;
             roost = self;
           };
+
+        # Two-node test of the wireguard-mesh module. Boots two VMs on
+        # the test driver's shared virtual network, brings up the mesh,
+        # and verifies cross-mesh reachability + firewall scoping.
+        mkMeshTest =
+          {
+            pkgs,
+            extraModules ? [ ],
+          }:
+          import ./test/mesh.nix {
+            inherit pkgs extraModules;
+            roost = self;
+          };
+
+        # Two-VM end-to-end test for the frigate-edge preset. Boots a
+        # full nix-bitcoin stack on the `backend` node (with the
+        # public-frigate exposeBackends option enabled) and a slim
+        # frigate-edge consumer on the `edge` node, then exercises the
+        # edge's Electrum listeners.
+        mkRegtestEdgeE2E =
+          {
+            pkgs,
+            extraModules ? [ ],
+          }:
+          import ./test/regtest-edge.nix {
+            inherit pkgs extraModules;
+            roost = self;
+          };
       };
 
       checks = forAllLinux (system: {
@@ -110,6 +140,12 @@
           inherit nix-bitcoin;
         };
         regtest-preset = self.lib.mkRegtestPresetE2E {
+          pkgs = pkgsFor system;
+        };
+        regtest-edge = self.lib.mkRegtestEdgeE2E {
+          pkgs = pkgsFor system;
+        };
+        wireguard-mesh = self.lib.mkMeshTest {
           pkgs = pkgsFor system;
         };
       });
