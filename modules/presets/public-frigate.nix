@@ -7,32 +7,19 @@
 
 let
   cfg = config.services.public-frigate;
-
-  # Frigate occupies the canonical Electrum ports (50001 plaintext,
-  # `publicPort` for TLS); the backend Electrum server (fulcrum) moves
-  # off 50001 to this non-conflicting port. The README example uses
-  # 60001. Captured here so the fulcrum listen port and frigate's
-  # `electrumBackend` URL can't drift apart.
-  backendPort = 60001;
+  stack = config.services._roost.bitcoin-stack;
 
   # The local frigate process always reads ZMQ off loopback; that's a
   # constant. When `exposeBackends` is on, bitcoind additionally binds
   # the same socket on the mesh address so edge consumers can subscribe
-  # — see the publish endpoint below.
+  # (the bitcoin-stack helper handles the bind switch).
   zmqSequenceEndpoint = "tcp://127.0.0.1:28336";
-
-  # Where bitcoind opens the ZMQ socket. With no edge consumers, bind
-  # to loopback only. With `exposeBackends.enable`, bind to 0.0.0.0 so
-  # both local frigate (via 127.0.0.1) and remote edge frigate (via
-  # `bindAddress`) can subscribe; the firewall scopes outside access
-  # to `exposeBackends.interface` only.
-  zmqPublishBind = if cfg.exposeBackends.enable then "0.0.0.0" else "127.0.0.1";
-  zmqPublishEndpoint = "tcp://${zmqPublishBind}:28336";
 in
 {
   imports = [
     ../frigate.nix
     ../_internal/frigate-tls-acme.nix
+    ../_internal/bitcoin-stack.nix
   ];
 
   options.services.public-frigate = with lib; {
@@ -194,6 +181,27 @@ in
         };
       }
 
+      # bitcoind + fulcrum (+ optional mesh exposure) are shared with
+      # `bitcoind-backend`; delegate to the private helper module.
+      # Only activate the helper when this preset is the one managing
+      # the services locally — the `manage = false` path lets a
+      # consumer wire bitcoind/fulcrum out of band and just have
+      # frigate point at them.
+      (lib.mkIf (cfg.bitcoind.manage && cfg.fulcrum.manage) {
+        services._roost.bitcoin-stack = {
+          enable = true;
+          expose = {
+            enable = cfg.exposeBackends.enable;
+            bindAddress = cfg.exposeBackends.bindAddress;
+            interface = cfg.exposeBackends.interface;
+            allowedPeers = cfg.exposeBackends.allowedPeers;
+            rpcAuth = {
+              inherit (cfg.exposeBackends.rpcAuth) user passwordHMAC;
+            };
+          };
+        };
+      })
+
       {
         assertions = [
           {
@@ -217,40 +225,26 @@ in
               and enable it, or set services.public-frigate.fulcrum.manage = true.
             '';
           }
+          {
+            assertion = !cfg.exposeBackends.enable || (cfg.bitcoind.manage && cfg.fulcrum.manage);
+            message = ''
+              services.public-frigate.exposeBackends.enable requires both
+              bitcoind.manage = true and fulcrum.manage = true. The preset
+              cannot expose services it does not configure.
+            '';
+          }
         ];
       }
-
-      (lib.mkIf cfg.bitcoind.manage {
-        # nix-bitcoin requires a secrets policy whenever bitcoind is enabled
-        # through it. Default to its built-in generator, which writes RPC
-        # credentials to /etc/nix-bitcoin-secrets (mode 0400) on activation.
-        # Override to "manual" if you manage secrets out of band (agenix etc.).
-        nix-bitcoin.generateSecrets = lib.mkDefault true;
-
-        services.bitcoind = {
-          enable = true;
-          txindex = true;
-          listen = true;
-          address = "0.0.0.0";
-          dataDirReadableByGroup = true;
-          dbCache = lib.mkDefault 4096;
-        };
-        networking.firewall.allowedTCPPorts = [ 8333 ];
-      })
-
-      (lib.mkIf cfg.fulcrum.manage {
-        services.fulcrum.enable = true;
-      })
 
       {
         # Frigate terminates TLS itself on the public port. The plaintext
         # listener is bound to loopback for local probes/operator use —
         # all public traffic comes in over `ssl`. The backend Electrum
-        # server (fulcrum/electrs/etc.) listens on a non-conflicting port
-        # so frigate can occupy the canonical Electrum ports.
+        # server (fulcrum) listens on `bitcoin-stack`'s `backendPort` so
+        # frigate can occupy the canonical Electrum ports.
         #
         # `sslCert`, `sslKey` and `extraSupplementaryGroups` are set by
-        # the shared TLS+ACME helper (imported above).
+        # the shared TLS+ACME helper.
         services.frigate = {
           enable = true;
           host = cfg.host;
@@ -264,7 +258,7 @@ in
             cookieDir = "/var/lib/bitcoind";
             inherit zmqSequenceEndpoint;
           };
-          electrumBackend = "tcp://127.0.0.1:${toString backendPort}";
+          electrumBackend = "tcp://127.0.0.1:${toString stack.backendPort}";
         };
 
         users.users.frigate.extraGroups = [ "bitcoin" ];
@@ -278,106 +272,8 @@ in
           "fulcrum.service"
         ];
 
-        # Move fulcrum off 50001 so frigate can occupy the canonical
-        # Electrum ports. mkDefault so a consumer running their own
-        # fulcrum out of band can still override.
-        services.fulcrum.port = lib.mkDefault backendPort;
-
         networking.firewall.allowedTCPPorts = [ cfg.publicPort ];
       }
-
-      # Pair bitcoind's ZMQ sequence publisher with frigate's
-      # `zmqSequenceEndpoint`. Only wired here when the preset is
-      # managing bitcoind — a consumer running bitcoind out of band must
-      # add `zmqpubsequence=...` (matching the endpoint above)
-      # themselves, or mkForce
-      # `services.frigate.bitcoind.zmqSequenceEndpoint = null` to fall
-      # back to polling (and accept the upstream warning).
-      #
-      # nix-bitcoin's bitcoind module loosens RestrictAddressFamilies to
-      # include AF_NETLINK only when its *typed* ZMQ options
-      # (`zmqpubrawblock`, `zmqpubrawtx`) are set — see `zmqServerEnabled`
-      # in modules/bitcoind.nix and `allowNetlink` in pkgs/lib.nix on
-      # the locked release. Going through `extraConfig` bypasses that
-      # gate, so libzmq's `getifaddrs()` call during `zmq_bind` hits
-      # EAFNOSUPPORT and `resolve_nic_name` aborts the daemon. Mirror
-      # `allowNetlink` here: `AF_UNIX AF_INET AF_INET6` is the verbatim
-      # `defaultHardening.RestrictAddressFamilies` value, plus the
-      # `AF_NETLINK` `allowNetlink` would have added. mkForce because
-      # the nix-bitcoin module already assigns the string.
-      (lib.mkIf cfg.bitcoind.manage {
-        services.bitcoind.extraConfig = ''
-          zmqpubsequence=${zmqPublishEndpoint}
-        '';
-        systemd.services.bitcoind.serviceConfig.RestrictAddressFamilies =
-          lib.mkForce "AF_UNIX AF_INET AF_INET6 AF_NETLINK";
-      })
-
-      # exposeBackends: bind bitcoind RPC + ZMQ + fulcrum on the mesh
-      # interface for an edge consumer. Only honored when the preset is
-      # managing those services locally — exposing services we don't
-      # manage would be a contract violation.
-      #
-      # bitcoind RPC: nix-bitcoin's `rpc.address` is single-valued, so
-      # we keep the typed loopback default and append a second
-      # `rpcbind=` via extraConfig. bitcoind accepts repeated rpcbind
-      # lines and binds each one.
-      #
-      # ZMQ: the publish endpoint above (`zmqPublishEndpoint`) already
-      # flips to 0.0.0.0 when exposeBackends is on — no extraConfig
-      # work needed here for ZMQ.
-      #
-      # fulcrum: same single-bind option pattern as bitcoind RPC. The
-      # typed `address` stays on loopback; an extra `tcp = ...` line is
-      # appended via `extraConfig` for the mesh address.
-      (lib.mkIf cfg.exposeBackends.enable {
-        assertions = [
-          {
-            assertion = cfg.bitcoind.manage;
-            message = ''
-              services.public-frigate.exposeBackends.enable requires
-              services.public-frigate.bitcoind.manage = true. The preset
-              cannot expose a bitcoind it does not configure.
-            '';
-          }
-          {
-            assertion = cfg.fulcrum.manage;
-            message = ''
-              services.public-frigate.exposeBackends.enable requires
-              services.public-frigate.fulcrum.manage = true. The preset
-              cannot expose a fulcrum it does not configure.
-            '';
-          }
-        ];
-
-        services.bitcoind = {
-          rpc.allowip = [ "127.0.0.1" ] ++ cfg.exposeBackends.allowedPeers;
-          rpc.users.${cfg.exposeBackends.rpcAuth.user} = {
-            inherit (cfg.exposeBackends.rpcAuth) passwordHMAC;
-          };
-          extraConfig = ''
-            rpcbind=${cfg.exposeBackends.bindAddress}
-          '';
-        };
-
-        services.fulcrum.extraConfig = ''
-          tcp = ${cfg.exposeBackends.bindAddress}:${toString backendPort}
-        '';
-
-        # Scope the open ports to the mesh interface only. Outside
-        # traffic (e.g. the public internet on eth0) is dropped at
-        # INPUT by NixOS's default-deny firewall posture.
-        #
-        # Pull bitcoind's RPC port from config rather than hardcoding
-        # `8332`. nix-bitcoin's `rpc.port` default tracks the chain
-        # (8332 mainnet, 18443 regtest, 18332 testnet, etc.), and the
-        # firewall has to match wherever bitcoind actually listens.
-        networking.firewall.interfaces.${cfg.exposeBackends.interface}.allowedTCPPorts = [
-          config.services.bitcoind.rpc.port
-          28336
-          backendPort
-        ];
-      })
     ]
   );
 }
