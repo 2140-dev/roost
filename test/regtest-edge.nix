@@ -147,6 +147,12 @@ pkgs.testers.runNixOSTest {
       # what regtest-preset does on the backend.
       services.frigate.computeBackend = lib.mkForce "CPU";
 
+      # The probe below pipes JSON-RPC into `nc -q 3` to bound how long
+      # nc waits after stdin EOF. `-q` is a netcat-openbsd extension;
+      # NixOS's default nc supports `-z` but not `-q`, so without this
+      # package the probe silently emits nothing and the loop times out.
+      environment.systemPackages = [ pkgs.netcat-openbsd ];
+
       virtualisation.cores = 2;
       virtualisation.memorySize = 2048;
     };
