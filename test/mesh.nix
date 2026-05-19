@@ -40,17 +40,16 @@ let
     a = {
       publicKey = testKeys.a.publicKey;
       # `nodes.<name>.networking.primaryIPAddress` is the canonical way
-      # to reference a VM's primary NIC address inside a nixosTest; the
-      # test driver wires nodes onto a shared subnet at runtime. We
-      # cannot reference that inside `nodes.*` (cyclic), so hardcode
-      # the default test driver addresses here: `nodeA` gets .2, `nodeB`
-      # gets .3 on 192.168.1.0/24.
-      endpoint = "192.168.1.2:51820";
+      # to reference a VM's primary NIC address inside a nixosTest, but
+      # we cannot reference that from inside `nodes.*` (cyclic). The
+      # test framework assigns 192.168.<vlan>.<nodeNumber> starting at
+      # nodeNumber 1, in declaration order: nodeA = .1, nodeB = .2.
+      endpoint = "192.168.1.1:51820";
       meshIp = "10.42.0.1";
     };
     b = {
       publicKey = testKeys.b.publicKey;
-      endpoint = "192.168.1.3:51820";
+      endpoint = "192.168.1.2:51820";
       meshIp = "10.42.0.2";
     };
   };

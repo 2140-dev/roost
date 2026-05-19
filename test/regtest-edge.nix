@@ -49,11 +49,12 @@ let
   # `user:password` line the edge feeds frigate via LoadCredential.
   authCredentialFile = pkgs.writeText "edge-bitcoind-auth" "${rpcUser}:${rpcPassword}";
 
-  # Mesh-like IP shared between the two VMs. The nixosTest default
-  # subnet is 192.168.1.0/24 with the first declared node at .2; pin
-  # the backend's IP via test-driver options so the edge can address it
-  # at a known location regardless of order.
-  backendIp = "192.168.1.2";
+  # The nixosTest framework assigns 192.168.<vlan>.<nodeNumber>
+  # starting at nodeNumber 1, in node-declaration order: `backend` is
+  # declared first so it ends up at .1, and `edge` at .2. Hardcoded
+  # here because the edge config needs to reference the backend's
+  # address before the test driver has wired up the topology.
+  backendIp = "192.168.1.1";
 in
 pkgs.testers.runNixOSTest {
   name = "regtest-edge";
