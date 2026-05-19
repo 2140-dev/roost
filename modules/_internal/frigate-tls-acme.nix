@@ -131,6 +131,16 @@ in
           };
         };
 
+        # nginx needs to read the HTTP-01 challenge files lego drops
+        # under `/var/lib/acme/acme-challenge/.well-known/acme-challenge/`.
+        # The NixOS ACME order-renew script creates that leaf directory
+        # with mode 0750 owned by `acme:acme`, so unless nginx is in the
+        # acme group it gets a 403 trying to serve the challenge token
+        # and validation fails with `urn:ietf:params:acme:error:unauthorized`.
+        # `enableACME` shorthand wires this automatically; we use webroot
+        # directly so we have to opt nginx into the group ourselves.
+        users.users.nginx.extraGroups = [ "acme" ];
+
         networking.firewall.allowedTCPPorts = [ 80 ];
 
         # Block frigate startup until the cert exists, otherwise it
