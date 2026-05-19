@@ -188,9 +188,28 @@ pkgs.testers.runNixOSTest {
       # Frigate-edge should authenticate against bitcoind (USERPASS,
       # plaintext fed via LoadCredential), subscribe to remote ZMQ, and
       # accept Electrum traffic on both its plaintext and TLS listeners.
+      #
+      # `wait_for_unit` accepts the unit in the brief `activating` state
+      # of a restart cycle, so it's not a strong "frigate is up" signal.
+      # The port-open check is the real gate. Bound it tightly enough
+      # that a stuck restart loop surfaces fast, and dump the unit
+      # journal on failure so the actual error (auth, DNS, ZMQ) is
+      # visible in CI output instead of just "port never opened".
       edge.wait_for_unit("frigate.service")
-      edge.wait_for_open_port(50001)
-      edge.wait_for_open_port(50002)
+
+      import time
+      deadline = time.time() + 60
+      while time.time() < deadline:
+          if edge.execute("ss -tln | grep -q ':50001 '")[0] == 0:
+              break
+          time.sleep(2)
+      else:
+          journal, _ = edge.execute("journalctl -u frigate -n 50 --no-pager")
+          raise Exception(
+              f"frigate-edge did not bind port 50001 within 60s. "
+              f"Last 50 journal lines:\n{journal}"
+          )
+      edge.wait_for_open_port(50002, timeout=10)
 
       import time
       deadline = time.time() + 120
