@@ -116,11 +116,16 @@ pkgs.testers.runNixOSTest {
       # JSON-RPC server using the configured rpcauth user. Verify the
       # HMAC line bitcoind writes really does match the password the
       # client sends.
+      #
+      # The ''${...} are Nix interpolations resolved before this Python
+      # source ever exists — the resulting literals don't need an
+      # f-prefix (Ruff F541 otherwise) and the JSON body's `{`/`}` are
+      # plain characters in a non-f-string.
       auth_check = machine.succeed(
-          f'curl -s --fail -u "${rpcUser}:${rpcPassword}" '
-          f'-H "Content-Type: application/json" '
-          f'-d \'{{"jsonrpc":"1.0","id":"t","method":"getblockcount","params":[]}}\' '
-          f'http://${meshIp}:18443/'
+          'curl -s --fail -u "${rpcUser}:${rpcPassword}" '
+          '-H "Content-Type: application/json" '
+          '-d \'{"jsonrpc":"1.0","id":"t","method":"getblockcount","params":[]}\' '
+          'http://${meshIp}:18443/'
       )
       print(f"rpcauth probe: {auth_check}")
       assert '"result":101' in auth_check, (
@@ -131,11 +136,11 @@ pkgs.testers.runNixOSTest {
       # Wrong password should be rejected. (Catches HMAC-line-malformed
       # bugs that would otherwise let any auth succeed.)
       wrong = machine.execute(
-          f'curl -s -o /dev/null -w "%{{http_code}}" '
-          f'-u "${rpcUser}:not-the-password" '
-          f'-H "Content-Type: application/json" '
-          f'-d \'{{"jsonrpc":"1.0","id":"t","method":"getblockcount","params":[]}}\' '
-          f'http://${meshIp}:18443/'
+          'curl -s -o /dev/null -w "%{http_code}" '
+          '-u "${rpcUser}:not-the-password" '
+          '-H "Content-Type: application/json" '
+          '-d \'{"jsonrpc":"1.0","id":"t","method":"getblockcount","params":[]}\' '
+          'http://${meshIp}:18443/'
       )
       assert "401" in wrong[1], f"wrong password should yield 401, got: {wrong[1]!r}"
     '';
