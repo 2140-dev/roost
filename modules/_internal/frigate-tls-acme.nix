@@ -106,19 +106,25 @@ in
         # (`BEGIN EC PRIVATE KEY`) and RSA keys in PKCS#1
         # (`BEGIN RSA PRIVATE KEY`). Convert key.pem in place after
         # each issuance/renewal so frigate can parse it. Runs as root
-        # in the cert directory; `chown acme:acme` keeps the file
-        # owned the way NixOS would have set it. Idempotent — running
-        # `openssl pkcs8 -topk8` on an already-PKCS#8 key is a no-op.
+        # in the cert directory. Idempotent — running `openssl pkcs8
+        # -topk8` on an already-PKCS#8 key is a no-op.
+        #
+        # `openssl pkcs8 -out` hardcodes mode 0600 on the output file
+        # regardless of umask (defensive for private keys), so we
+        # `chmod 0640` explicitly afterward — frigate joins the `acme`
+        # group via `extraSupplementaryGroups` above and needs group
+        # read to load the key. `chown acme:acme` keeps the file owned
+        # the way NixOS would have set it.
         security.acme.certs.${cfg.host} = {
           domain = cfg.host;
           webroot = "/var/lib/acme/acme-challenge";
           group = "acme";
           reloadServices = [ "frigate.service" ];
           postRun = ''
-            umask 0027
             ${pkgs.openssl}/bin/openssl pkcs8 -topk8 -nocrypt \
               -in key.pem -out key.pem.pkcs8
             chown acme:acme key.pem.pkcs8
+            chmod 0640 key.pem.pkcs8
             mv key.pem.pkcs8 key.pem
           '';
         };
@@ -130,6 +136,16 @@ in
             locations."/".return = "404";
           };
         };
+
+        # nginx needs to read the HTTP-01 challenge files lego drops
+        # under `/var/lib/acme/acme-challenge/.well-known/acme-challenge/`.
+        # The NixOS ACME order-renew script creates that leaf directory
+        # with mode 0750 owned by `acme:acme`, so unless nginx is in the
+        # acme group it gets a 403 trying to serve the challenge token
+        # and validation fails with `urn:ietf:params:acme:error:unauthorized`.
+        # `enableACME` shorthand wires this automatically; we use webroot
+        # directly so we have to opt nginx into the group ourselves.
+        users.users.nginx.extraGroups = [ "acme" ];
 
         networking.firewall.allowedTCPPorts = [ 80 ];
 
