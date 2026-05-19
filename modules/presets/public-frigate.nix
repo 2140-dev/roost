@@ -367,8 +367,13 @@ in
         # Scope the open ports to the mesh interface only. Outside
         # traffic (e.g. the public internet on eth0) is dropped at
         # INPUT by NixOS's default-deny firewall posture.
+        #
+        # Pull bitcoind's RPC port from config rather than hardcoding
+        # `8332`. nix-bitcoin's `rpc.port` default tracks the chain
+        # (8332 mainnet, 18443 regtest, 18332 testnet, etc.), and the
+        # firewall has to match wherever bitcoind actually listens.
         networking.firewall.interfaces.${cfg.exposeBackends.interface}.allowedTCPPorts = [
-          8332
+          config.services.bitcoind.rpc.port
           28336
           backendPort
         ];
