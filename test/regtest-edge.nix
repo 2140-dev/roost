@@ -41,10 +41,12 @@ let
   rpcUser = "frigate-edge";
   rpcPassword = "testpassword";
 
-  # `salt$hash` computed once via HMAC-SHA256(salt, password). Same
-  # algorithm bitcoind/share/rpcauth/rpcauth.py implements. Committable
-  # — derives one-way from the plaintext.
-  rpcPasswordHMAC = "2316d0a5e8ee6339ffb4d86c983bb421$9b90ff10a12e7df0dee2cd86f827461d3a481f1947a0bae613e4046407ee6ced";
+  # `salt$hash` form bitcoind expects. The HMAC is computed as
+  # HMAC-SHA256 with the salt's *literal UTF-8 bytes* as the key (not
+  # the hex-decoded bytes) — same algorithm bitcoind/share/rpcauth/rpcauth.py
+  # implements: `hmac.new(salt.encode("utf-8"), password.encode("utf-8"), "SHA256")`.
+  # Committable — derives one-way from the plaintext.
+  rpcPasswordHMAC = "2316d0a5e8ee6339ffb4d86c983bb421$34cc4776187170b359d40928b25deb28ea2bfc436c96fdd0db7150ec5211de85";
 
   # `user:password` line the edge feeds frigate via LoadCredential.
   authCredentialFile = pkgs.writeText "edge-bitcoind-auth" "${rpcUser}:${rpcPassword}";
