@@ -49,8 +49,32 @@
         {
           frigate = pkgs.frigate;
           default = pkgs.frigate;
+
+          # frigate-bench: measure bitcoind RPC cost with frigate's actual
+          # call patterns and HTTP keep-alive (no fresh-curl-per-call TCP
+          # handshake artifacts). Run via `nix run .#frigate-bench` — see
+          # `apps.<system>.frigate-bench` below.
+          #
+          # Style/whitespace warnings (E501 line length, E226/E241 spacing,
+          # E265 block-comment style) are ignored — they fight with the
+          # script's print-table alignment and aren't worth contorting for.
+          frigate-bench = pkgs.writers.writePython3Bin "frigate-bench" {
+            flakeIgnore = [
+              "E501"
+              "E226"
+              "E241"
+              "E265"
+            ];
+          } (builtins.readFile ./tools/frigate-bench/bench.py);
         }
       );
+
+      apps = forAllSystems (system: {
+        frigate-bench = {
+          type = "app";
+          program = "${self.packages.${system}.frigate-bench}/bin/frigate-bench";
+        };
+      });
 
       nixosModules = {
         frigate = ./modules/frigate.nix;
