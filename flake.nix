@@ -81,14 +81,15 @@
         hetzner-bare-metal = ./modules/presets/hetzner-bare-metal.nix;
         public-frigate = ./modules/presets/public-frigate.nix;
         frigate-edge = ./modules/presets/frigate-edge.nix;
+        bitcoind-backend = ./modules/presets/bitcoind-backend.nix;
         wireguard-mesh = ./modules/wireguard-mesh.nix;
 
-        # Batteries-included entry point. Bundles nix-bitcoin so the
-        # consumer needs only `roost` in their flake inputs to deploy a
-        # complete public Frigate node, and turns on the preset's manage
-        # flags so bitcoind and fulcrum are configured automatically.
-        # Use `nixosModules.public-frigate` directly if you operate
-        # bitcoind/fulcrum out of band.
+        # Batteries-included entry point for an all-in-one public
+        # Frigate node. Bundles nix-bitcoin so the consumer needs only
+        # `roost` in their flake inputs, and turns on the preset's
+        # manage flags so bitcoind and fulcrum are configured
+        # automatically. Use `nixosModules.public-frigate` directly if
+        # you operate bitcoind/fulcrum out of band.
         default = {
           imports = [
             nix-bitcoin.nixosModules.default
@@ -98,6 +99,17 @@
             bitcoind.manage = nixpkgs.lib.mkDefault true;
             fulcrum.manage = nixpkgs.lib.mkDefault true;
           };
+        };
+
+        # Batteries-included entry point for a bitcoind-backend host —
+        # bundles nix-bitcoin + the bitcoind-backend preset. Use this
+        # on the box that hosts bitcoind/fulcrum for a remote
+        # `frigate-edge` consumer; no frigate is configured here.
+        bitcoind-backend-host = {
+          imports = [
+            nix-bitcoin.nixosModules.default
+            ./modules/presets/bitcoind-backend.nix
+          ];
         };
       };
 
@@ -156,6 +168,20 @@
             inherit pkgs extraModules;
             roost = self;
           };
+
+        # Single-VM test for the bitcoind-backend preset. Verifies the
+        # backend stack (bitcoind RPC + ZMQ + fulcrum) comes up with
+        # the right bindings and that an external-looking RPC call
+        # using the configured rpcauth user succeeds.
+        mkRegtestBackend =
+          {
+            pkgs,
+            extraModules ? [ ],
+          }:
+          import ./test/regtest-backend.nix {
+            inherit pkgs extraModules;
+            roost = self;
+          };
       };
 
       checks = forAllLinux (system: {
@@ -167,6 +193,9 @@
           pkgs = pkgsFor system;
         };
         regtest-edge = self.lib.mkRegtestEdgeE2E {
+          pkgs = pkgsFor system;
+        };
+        regtest-backend = self.lib.mkRegtestBackend {
           pkgs = pkgsFor system;
         };
         wireguard-mesh = self.lib.mkMeshTest {
