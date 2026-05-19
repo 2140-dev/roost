@@ -106,19 +106,25 @@ in
         # (`BEGIN EC PRIVATE KEY`) and RSA keys in PKCS#1
         # (`BEGIN RSA PRIVATE KEY`). Convert key.pem in place after
         # each issuance/renewal so frigate can parse it. Runs as root
-        # in the cert directory; `chown acme:acme` keeps the file
-        # owned the way NixOS would have set it. Idempotent — running
-        # `openssl pkcs8 -topk8` on an already-PKCS#8 key is a no-op.
+        # in the cert directory. Idempotent — running `openssl pkcs8
+        # -topk8` on an already-PKCS#8 key is a no-op.
+        #
+        # `openssl pkcs8 -out` hardcodes mode 0600 on the output file
+        # regardless of umask (defensive for private keys), so we
+        # `chmod 0640` explicitly afterward — frigate joins the `acme`
+        # group via `extraSupplementaryGroups` above and needs group
+        # read to load the key. `chown acme:acme` keeps the file owned
+        # the way NixOS would have set it.
         security.acme.certs.${cfg.host} = {
           domain = cfg.host;
           webroot = "/var/lib/acme/acme-challenge";
           group = "acme";
           reloadServices = [ "frigate.service" ];
           postRun = ''
-            umask 0027
             ${pkgs.openssl}/bin/openssl pkcs8 -topk8 -nocrypt \
               -in key.pem -out key.pem.pkcs8
             chown acme:acme key.pem.pkcs8
+            chmod 0640 key.pem.pkcs8
             mv key.pem.pkcs8 key.pem
           '';
         };
