@@ -37,8 +37,13 @@
         };
     in
     {
+      # Overlay attribute is `frigate-sparrowwallet` rather than the plain
+      # `frigate` to avoid silently colliding with nixpkgs's unrelated
+      # `pkgs.frigate` (blakeblackshear/frigate, an NVR camera). The module
+      # reads this name; consumers wanting overlay-based overrides set
+      # `frigate-sparrowwallet` in their own overlay too.
       overlays.default = final: _prev: {
-        frigate = final.callPackage ./pkgs/frigate/package.nix { };
+        frigate-sparrowwallet = final.callPackage ./pkgs/frigate/package.nix { };
       };
 
       packages = forAllSystems (
@@ -47,8 +52,8 @@
           pkgs = pkgsFor system;
         in
         {
-          frigate = pkgs.frigate;
-          default = pkgs.frigate;
+          frigate = pkgs.frigate-sparrowwallet;
+          default = pkgs.frigate-sparrowwallet;
 
           # frigate-bench: measure bitcoind RPC cost with frigate's actual
           # call patterns and HTTP keep-alive (no fresh-curl-per-call TCP

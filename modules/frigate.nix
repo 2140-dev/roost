@@ -84,15 +84,21 @@ in
 
     package = mkOption {
       type = types.package;
-      default = pkgs.frigate or (pkgs.callPackage ../pkgs/frigate/package.nix { });
-      defaultText = literalExpression "pkgs.frigate or (pkgs.callPackage \"\${roost}/pkgs/frigate/package.nix\" { })";
+      default = pkgs.frigate-sparrowwallet or (pkgs.callPackage ../pkgs/frigate/package.nix { });
+      defaultText = literalExpression "pkgs.frigate-sparrowwallet or (pkgs.callPackage \"\${roost}/pkgs/frigate/package.nix\" { })";
       description = ''
-        Frigate package to use. Defaults to `pkgs.frigate` if defined
-        (e.g. via `roost.overlays.default` or a consumer overlay),
-        otherwise to a fresh callPackage of `pkgs/frigate/package.nix`
-        from this flake — so the standard Nix override paths
-        (overlay, this option, or a downstream package fork) all
-        compose.
+        Frigate package to use. Resolves to `pkgs.frigate-sparrowwallet`
+        when defined (e.g. via `roost.overlays.default` or a consumer
+        overlay), otherwise falls back to a fresh callPackage of
+        `pkgs/frigate/package.nix` from this flake. The non-standard
+        attribute name avoids a collision with nixpkgs's unrelated
+        `pkgs.frigate` (blakeblackshear/frigate, an NVR camera) — using
+        the plain `frigate` name would silently resolve to that
+        derivation for any consumer not applying roost's overlay.
+
+        All three standard override paths still compose: a consumer
+        overlay defining `pkgs.frigate-sparrowwallet`, this option, or
+        a downstream fork of `pkgs/frigate/package.nix`.
       '';
     };
 
