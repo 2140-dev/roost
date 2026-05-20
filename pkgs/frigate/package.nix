@@ -21,13 +21,13 @@ let
 in
 stdenv.mkDerivation (finalAttrs: {
   pname = "frigate";
-  version = "1.5.0";
+  version = "1.5.1";
 
   src = fetchFromGitHub {
     owner = "sparrowwallet";
     repo = "frigate";
-    rev = "116d62bb0eaeb70a357068fecd1e202914772597";
-    hash = "sha256-xvjR5pgtF/AtV5941w1RIkJEWdbjTDBPMpu24TsxPWY=";
+    rev = "f8b0457f3b4bc7f80693bfe1bb203e3517270b5c"; # tag: 1.5.1
+    hash = "sha256-0CwBrChpHrdmnvCTHHnRsqXu4pAHwev4DljpuYgo+W8=";
   };
 
   postUnpack = ''
