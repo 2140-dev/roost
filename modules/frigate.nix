@@ -84,9 +84,16 @@ in
 
     package = mkOption {
       type = types.package;
-      default = pkgs.callPackage ../pkgs/frigate/package.nix { };
-      defaultText = literalExpression "pkgs.callPackage \"\${roost}/pkgs/frigate/package.nix\" { }";
-      description = "Frigate package to use.";
+      default = pkgs.frigate or (pkgs.callPackage ../pkgs/frigate/package.nix { });
+      defaultText = literalExpression "pkgs.frigate or (pkgs.callPackage \"\${roost}/pkgs/frigate/package.nix\" { })";
+      description = ''
+        Frigate package to use. Defaults to `pkgs.frigate` if defined
+        (e.g. via `roost.overlays.default` or a consumer overlay),
+        otherwise to a fresh callPackage of `pkgs/frigate/package.nix`
+        from this flake — so the standard Nix override paths
+        (overlay, this option, or a downstream package fork) all
+        compose.
+      '';
     };
 
     user = mkOption {
