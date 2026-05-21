@@ -148,6 +148,40 @@ checks.x86_64-linux.frigate = roost.lib.mkRegtestPresetE2E {
 };
 ```
 
+## Updating frigate
+
+The pinned frigate tag lives in `pkgs/frigate/package.nix`. To bump it:
+
+1. Find the new tag and its commit SHA at
+   <https://github.com/sparrowwallet/frigate/tags>.
+2. In `pkgs/frigate/package.nix`, update `version`, the `src.rev`, and the
+   `# tag:` comment beside the rev. Set `src.hash` to the new tarball
+   hash — either zero the field out and let `nix build` print the
+   expected SRI, or prefetch it:
+
+   ```
+   nix-prefetch-url --unpack --type sha256 \
+     https://github.com/sparrowwallet/frigate/archive/<rev>.tar.gz
+   nix hash to-sri --type sha256 <printed-hash>
+   ```
+3. Check whether the drongo submodule pointer changed in the new tag
+   (`git ls-tree <rev> drongo` on a frigate checkout, or inspect the
+   release diff). If it did, update `drongoSrc.rev` and `drongoSrc.hash`
+   the same way.
+4. Build: `nix build .#frigate`. If gradle dependencies changed, the
+   build will fail with a mismatch against `pkgs/frigate/deps.json`.
+   Regenerate it by running the mitm-cache fetch script that nixpkgs's
+   gradle infrastructure exposes — it rewrites `pkgs/frigate/deps.json`
+   in place, so run it from the repo root:
+
+   ```
+   $(nix build .#frigate.mitmCache.updateScript --no-link --print-out-paths)
+   ```
+
+   Re-run `nix build .#frigate` to confirm.
+5. Run the VM tests: `nix flake check`.
+6. Sanity-check the version string: `./result/bin/frigate --version`.
+
 ## License
 
 MIT. See [LICENSE](LICENSE).
