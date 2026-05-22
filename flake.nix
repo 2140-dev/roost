@@ -87,6 +87,7 @@
         public-frigate = ./modules/presets/public-frigate.nix;
         frigate-edge = ./modules/presets/frigate-edge.nix;
         bitcoind-backend = ./modules/presets/bitcoind-backend.nix;
+        personal-frigate = ./modules/presets/personal-frigate.nix;
         wireguard-mesh = ./modules/wireguard-mesh.nix;
 
         # Batteries-included entry point for an all-in-one public
@@ -115,6 +116,23 @@
             nix-bitcoin.nixosModules.default
             ./modules/presets/bitcoind-backend.nix
           ];
+        };
+
+        # Batteries-included entry point for a personal Frigate node.
+        # Bundles nix-bitcoin so the consumer needs only `roost` in
+        # their flake inputs, and turns on both manage flags so
+        # bitcoind and electrs are configured automatically. Use
+        # `nixosModules.personal-frigate` directly if you operate
+        # bitcoind/electrs out of band.
+        personal-frigate-host = {
+          imports = [
+            nix-bitcoin.nixosModules.default
+            ./modules/presets/personal-frigate.nix
+          ];
+          services.personal-frigate = {
+            bitcoind.manage = nixpkgs.lib.mkDefault true;
+            electrs.manage = nixpkgs.lib.mkDefault true;
+          };
         };
       };
 
@@ -174,6 +192,21 @@
             roost = self;
           };
 
+        # End-to-end test against `nixosModules.personal-frigate-host` —
+        # the single-box personal deployment with bitcoind + electrs +
+        # plaintext Electrum on loopback. Boots one VM, mines 101
+        # regtest blocks, then probes electrs and frigate over the
+        # Electrum protocol.
+        mkRegtestPersonalE2E =
+          {
+            pkgs,
+            extraModules ? [ ],
+          }:
+          import ./test/regtest-personal.nix {
+            inherit pkgs extraModules;
+            roost = self;
+          };
+
         # Single-VM test for the bitcoind-backend preset. Verifies the
         # backend stack (bitcoind RPC + ZMQ + fulcrum) comes up with
         # the right bindings and that an external-looking RPC call
@@ -194,6 +227,9 @@
           pkgs = pkgsFor system;
           inherit nix-bitcoin;
         };
+        regtest-personal = self.lib.mkRegtestPersonalE2E {
+          pkgs = pkgsFor system;
+        };
         regtest-preset = self.lib.mkRegtestPresetE2E {
           pkgs = pkgsFor system;
         };
@@ -211,6 +247,11 @@
       templates.default = {
         path = ./templates/default;
         description = "A starting point for a Frigate deployment";
+      };
+
+      templates.personal-frigate = {
+        path = ./templates/personal-frigate;
+        description = "A starting point for a personal Frigate deployment (single box, no TLS)";
       };
 
       devShells = forAllSystems (
