@@ -124,114 +124,116 @@ in
     };
   };
 
-  config = lib.mkIf cfg.enable (lib.mkMerge [
-    { services.personal-frigate.preset-enabled = { }; }
+  config = lib.mkIf cfg.enable (
+    lib.mkMerge [
+      { services.personal-frigate.preset-enabled = { }; }
 
-    {
-      assertions = [
-        {
-          assertion = cfg.bitcoind.manage || (config.services ? bitcoind && config.services.bitcoind.enable);
-          message = ''
-            services.personal-frigate requires services.bitcoind.enable = true.
-            Either import nix-bitcoin and enable it, or set
-            services.personal-frigate.bitcoind.manage = true.
-            For a batteries-included setup, import
-            roost.nixosModules.personal-frigate-host.
-          '';
-        }
-        {
-          assertion =
-            cfg.bitcoind.manage || !(config.services ? bitcoind) || config.services.bitcoind.txindex;
-          message = "services.personal-frigate requires services.bitcoind.txindex = true.";
-        }
-        {
-          assertion = cfg.electrs.manage || (config.services ? electrs && config.services.electrs.enable);
-          message = ''
-            services.personal-frigate requires services.electrs.enable = true.
-            Either import nix-bitcoin and enable it, or set
-            services.personal-frigate.electrs.manage = true.
-          '';
-        }
-        {
-          assertion = !cfg.electrs.manage || cfg.bitcoind.manage;
-          message = ''
-            services.personal-frigate.electrs.manage = true requires
-            services.personal-frigate.bitcoind.manage = true. Either turn both
-            on (typical: use nixosModules.personal-frigate-host) or turn both
-            off and manage bitcoind + electrs out of band.
-          '';
-        }
-        {
-          assertion = cfg.port != cfg.backendPort;
-          message = ''
-            services.personal-frigate.port and .backendPort must differ
-            (frigate listens on `port`, electrs on `backendPort`).
-          '';
-        }
-      ];
-    }
+      {
+        assertions = [
+          {
+            assertion = cfg.bitcoind.manage || (config.services ? bitcoind && config.services.bitcoind.enable);
+            message = ''
+              services.personal-frigate requires services.bitcoind.enable = true.
+              Either import nix-bitcoin and enable it, or set
+              services.personal-frigate.bitcoind.manage = true.
+              For a batteries-included setup, import
+              roost.nixosModules.personal-frigate-host.
+            '';
+          }
+          {
+            assertion =
+              cfg.bitcoind.manage || !(config.services ? bitcoind) || config.services.bitcoind.txindex;
+            message = "services.personal-frigate requires services.bitcoind.txindex = true.";
+          }
+          {
+            assertion = cfg.electrs.manage || (config.services ? electrs && config.services.electrs.enable);
+            message = ''
+              services.personal-frigate requires services.electrs.enable = true.
+              Either import nix-bitcoin and enable it, or set
+              services.personal-frigate.electrs.manage = true.
+            '';
+          }
+          {
+            assertion = !cfg.electrs.manage || cfg.bitcoind.manage;
+            message = ''
+              services.personal-frigate.electrs.manage = true requires
+              services.personal-frigate.bitcoind.manage = true. Either turn both
+              on (typical: use nixosModules.personal-frigate-host) or turn both
+              off and manage bitcoind + electrs out of band.
+            '';
+          }
+          {
+            assertion = cfg.port != cfg.backendPort;
+            message = ''
+              services.personal-frigate.port and .backendPort must differ
+              (frigate listens on `port`, electrs on `backendPort`).
+            '';
+          }
+        ];
+      }
 
-    {
-      services.frigate = {
-        enable = true;
-        host = cfg.host;
-        network = cfg.network;
-        tcp = "tcp://${cfg.listenAddress}:${toString cfg.port}";
-        ssl = null;
-        bitcoind = {
+      {
+        services.frigate = {
           enable = true;
-          # Hardcoded mainnet RPC port — regtest tests use mkForce to override.
-          server = "http://127.0.0.1:8332";
-          authType = "COOKIE";
-          cookieDir = "/var/lib/bitcoind";
-          zmqSequenceEndpoint = "tcp://127.0.0.1:28336";
+          host = cfg.host;
+          network = cfg.network;
+          tcp = "tcp://${cfg.listenAddress}:${toString cfg.port}";
+          ssl = null;
+          bitcoind = {
+            enable = true;
+            # Hardcoded mainnet RPC port — regtest tests use mkForce to override.
+            server = "http://127.0.0.1:8332";
+            authType = "COOKIE";
+            cookieDir = "/var/lib/bitcoind";
+            zmqSequenceEndpoint = "tcp://127.0.0.1:28336";
+          };
+          electrumBackend = "tcp://127.0.0.1:${toString cfg.backendPort}";
         };
-        electrumBackend = "tcp://127.0.0.1:${toString cfg.backendPort}";
-      };
 
-      users.users.frigate.extraGroups = [ "bitcoin" ];
+        users.users.frigate.extraGroups = [ "bitcoin" ];
 
-      systemd.services.frigate.after = [
-        "bitcoind.service"
-        "electrs.service"
-      ];
-      systemd.services.frigate.wants = [
-        "bitcoind.service"
-        "electrs.service"
-      ];
-    }
+        systemd.services.frigate.after = [
+          "bitcoind.service"
+          "electrs.service"
+        ];
+        systemd.services.frigate.wants = [
+          "bitcoind.service"
+          "electrs.service"
+        ];
+      }
 
-    (lib.mkIf cfg.bitcoind.manage {
-      nix-bitcoin.generateSecrets = lib.mkDefault true;
+      (lib.mkIf cfg.bitcoind.manage {
+        nix-bitcoin.generateSecrets = lib.mkDefault true;
 
-      services.bitcoind = {
-        enable = true;
-        txindex = true;
-        listen = false;
-        address = "127.0.0.1";
-        dataDirReadableByGroup = true;
-        dbCache = lib.mkDefault cfg.dbCache;
-        extraConfig = ''
-          zmqpubsequence=tcp://127.0.0.1:28336
-        '';
-      };
+        services.bitcoind = {
+          enable = true;
+          txindex = true;
+          listen = false;
+          address = "127.0.0.1";
+          dataDirReadableByGroup = true;
+          dbCache = lib.mkDefault cfg.dbCache;
+          extraConfig = ''
+            zmqpubsequence=tcp://127.0.0.1:28336
+          '';
+        };
 
-      # libzmq's `getifaddrs()` during `zmq_bind` needs AF_NETLINK, but
-      # nix-bitcoin's bitcoind module only widens RestrictAddressFamilies
-      # for its *typed* ZMQ options (`zmqpubrawblock`, `zmqpubrawtx`).
-      # Configuring `zmqpubsequence` via extraConfig bypasses that gate,
-      # so the daemon would abort on bind without this override. Same
-      # rationale as in _internal/bitcoin-stack.nix.
-      systemd.services.bitcoind.serviceConfig.RestrictAddressFamilies =
-        lib.mkForce "AF_UNIX AF_INET AF_INET6 AF_NETLINK";
-    })
+        # libzmq's `getifaddrs()` during `zmq_bind` needs AF_NETLINK, but
+        # nix-bitcoin's bitcoind module only widens RestrictAddressFamilies
+        # for its *typed* ZMQ options (`zmqpubrawblock`, `zmqpubrawtx`).
+        # Configuring `zmqpubsequence` via extraConfig bypasses that gate,
+        # so the daemon would abort on bind without this override. Same
+        # rationale as in _internal/bitcoin-stack.nix.
+        systemd.services.bitcoind.serviceConfig.RestrictAddressFamilies =
+          lib.mkForce "AF_UNIX AF_INET AF_INET6 AF_NETLINK";
+      })
 
-    (lib.mkIf cfg.electrs.manage {
-      services.electrs = {
-        enable = true;
-        address = "127.0.0.1";
-        port = cfg.backendPort;
-      };
-    })
-  ]);
+      (lib.mkIf cfg.electrs.manage {
+        services.electrs = {
+          enable = true;
+          address = "127.0.0.1";
+          port = cfg.backendPort;
+        };
+      })
+    ]
+  );
 }
