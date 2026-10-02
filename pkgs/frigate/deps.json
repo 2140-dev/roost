@@ -183,9 +183,9 @@
    "jar": "sha256-RCBpGVitHAuidabW2KYxetvb3JJ3BVtqcqqJyIzajH0=",
    "pom": "sha256-pel6j6ALh5IPPwsFA7ri1GGx4mEsVviGirV554QqHEI="
   },
-  "org/duckdb#duckdb_jdbc/1.4.4.0": {
-   "jar": "sha256-Q/DMk8iSaZFi1G6KReLLuS2S90uTODL4THjtVRomCN8=",
-   "pom": "sha256-UmVx6H1er2ovhN6h+8i0ispNVfLK/5iI4g60aGmw90A="
+  "org/duckdb#duckdb_jdbc/1.5.5.0": {
+   "jar": "sha256-3mZOX3bUitcQl6z7MwY//LrzwN+n85vR+Uey0ZP+bo4=",
+   "pom": "sha256-XXj+Omu1GOmh2qkDaAjHonb6xe5pDNLcNu0VyI3+78Y="
   },
   "org/jcommander#jcommander/3.0": {
    "jar": "sha256-uITo3B4MPMpCMSNXvAMM0duSGvuJHJGBtpdnalnAYQE=",
